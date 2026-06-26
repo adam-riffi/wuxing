@@ -37,7 +37,7 @@ tools:
 	}
 
 	out := buf.String()
-	for _, want := range []string{"manifest loaded", "stopped cleanly", "library"} {
+	for _, want := range []string{"manifest loaded", "bus initialized", "stopped cleanly", "library"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log output missing %q\n--- got ---\n%s", want, out)
 		}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/adam-riffi/wuxing/internal/kernel/bus"
 	"github.com/adam-riffi/wuxing/internal/manifest"
 )
 
@@ -34,9 +35,9 @@ func main() {
 	}
 }
 
-// run boots the kernel: load the manifest, log the tools it would load, then
-// idle until ctx is cancelled and shut down cleanly. Phase 3+ wires the bus,
-// scheduler, sessions, triggers and launcher in place of the idle wait.
+// run boots the kernel: load the manifest, initialize the bus, log the tools it
+// would load, then idle until ctx is cancelled and shut down cleanly. The
+// scheduler, sessions, triggers and launcher are wired in here as they land.
 func run(ctx context.Context, manifestPath string, log zerolog.Logger) error {
 	log.Info().Str("manifest", manifestPath).Msg("booting wuxing kernel")
 
@@ -54,11 +55,15 @@ func run(ctx context.Context, manifestPath string, log zerolog.Logger) error {
 	}
 	log.Info().Int("tool_count", len(m.Tools)).Msg("manifest loaded")
 
-	log.Info().Msg("kernel idle — no manifest work yet, waiting for signal")
+	b := bus.New()
+	defer b.Close()
+	log.Info().Msg("bus initialized")
+
+	log.Info().Msg("kernel idle — waiting for signal")
 	<-ctx.Done()
 
 	log.Info().Msg("shutdown signal received, draining")
-	// Phase 3+ drains running sessions here before returning.
+	// Draining running sessions happens here as the kernel gains them.
 	log.Info().Msg("kernel stopped cleanly")
 	return nil
 }
