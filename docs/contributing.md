@@ -6,18 +6,29 @@
 - **Docker** (for integration tests and running service containers; not needed for unit tests or building)
 - **golangci-lint** (`go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 
-## Branch model — trunk-based
+## Branch model — `dev` integrates, `main` is stable
 
-`main` is protected and always releasable. Work happens on short-lived branches
-merged via squash PR.
+Two long-lived branches:
 
-- Branch names: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`.
-- Open a PR into `main`. CI must be green before merge.
-- Squash-merge; the PR title becomes the commit, so it must be a conventional commit.
+- **`main`** — always-stable / releasable. Only `dev` promotes into it. Never commit to it directly.
+- **`dev`** — the integration branch where CI runs and changes accumulate between releases.
+
+Flow:
+
+```
+feat/<slug> ──PR──▶ dev ──(CI green)──▶  ... ──PR──▶ main ──tag v*──▶ release
+   fix/…              (integration)                  (stable)
+```
+
+1. Branch off `dev`: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`.
+2. Open a PR **into `dev`**. CI must be green; squash-merge (PR title becomes the commit, so it must be a conventional commit).
+3. When `dev` is ready to ship, open a **promotion PR `dev` → `main`**. CI runs again on that PR; use a **merge commit** (not squash) so `main`'s history references the real `dev` commits.
+4. Tag `main` with `v*.*.*` to cut a release (triggers `release.yml`).
 
 ### Required status checks
 
-The following must pass before a PR can merge (enforced by branch protection):
+The same checks gate **both** the `feat → dev` PRs and the `dev → main` promotion PR
+(enforced by branch protection on each branch):
 
 - `lint`
 - `test-unit (ubuntu-latest)`, `test-unit (macos-latest)`, `test-unit (windows-latest)`
@@ -56,14 +67,19 @@ A pre-commit hook is recommended (runs lint + short tests + format check). Insta
 ## One-time repository setup (maintainer)
 
 Branch protection cannot be set from code; configure it once in the GitHub UI
-(Settings → Branches → add rule for `main`):
+(Settings → Branches). Add **one rule each** for `main` and `dev` — both get the
+same settings:
 
 - Require a pull request before merging.
 - Require status checks to pass — select every check listed above.
 - Require branches to be up to date before merging.
-- Do not allow direct pushes to `main`.
+- Do not allow direct pushes.
 
-Verify by attempting a direct push to `main` — it must be rejected.
+Set the repository's **default branch to `dev`** (Settings → General → Default
+branch) so new PRs target the integration branch automatically; `main` then only
+ever receives the promotion PR.
+
+Verify by attempting a direct push to either branch — it must be rejected.
 
 ## Testing conventions
 
