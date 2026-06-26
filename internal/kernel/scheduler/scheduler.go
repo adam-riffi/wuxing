@@ -16,7 +16,9 @@
 // claim. Backfill is opportunistic — without job-duration estimates it cannot
 // prove a backfilled job won't delay the head, so it only ever uses room the
 // head currently cannot. Patience (max_wait) with escalate/fail on expiry layers
-// on top via Expire; overclock into a reserve band is still to come.
+// on top via Expire, and overclock lets privileged work (user-class, including
+// escalated jobs) burst into a reserve memory band normal jobs are fenced out of
+// (WithReserve).
 package scheduler
 
 import (
@@ -71,11 +73,12 @@ type Job struct {
 // concurrent use. Admitted jobs are reported through the onAdmit callback, which
 // is invoked outside the lock so it may call back into the scheduler.
 type Scheduler struct {
-	capacity  int64
-	windowCap int64
-	onAdmit   func(Job)
-	onExpire  func(Job)
-	now       func() time.Time
+	capacity   int64
+	softBudget int64
+	windowCap  int64
+	onAdmit    func(Job)
+	onExpire   func(Job)
+	now        func() time.Time
 
 	mu         sync.Mutex
 	free       int64
@@ -95,6 +98,22 @@ func WithAIWindow(capacity int64) Option {
 	return func(s *Scheduler) {
 		s.windowCap = capacity
 		s.window = capacity
+	}
+}
+
+// WithReserve fences off a reserve memory band of the given size: normal
+// (background) jobs are admitted only up to capacity-reserve (the soft budget),
+// while privileged user-class work — including jobs escalated by patience — may
+// burst into the reserve up to the hard capacity. Drawn at actual request.
+func WithReserve(reserve int64) Option {
+	return func(s *Scheduler) {
+		if reserve < 0 {
+			reserve = 0
+		}
+		if reserve > s.capacity {
+			reserve = s.capacity
+		}
+		s.softBudget = s.capacity - reserve
 	}
 }
 
@@ -126,6 +145,7 @@ func New(capacity int64, onAdmit func(Job), opts ...Option) *Scheduler {
 	}
 	s := &Scheduler{
 		capacity:   capacity,
+		softBudget: capacity, // no reserve band unless WithReserve is set
 		onAdmit:    onAdmit,
 		onExpire:   func(Job) {},
 		now:        time.Now,
@@ -232,9 +252,20 @@ func (s *Scheduler) pump() []Job {
 	return admitted
 }
 
-// fits reports whether both resources have room for the job now.
+// fits reports whether both resources have room for the job now. Background jobs
+// are additionally fenced out of the reserve band: they may not push memory use
+// past the soft budget. Privileged user-class work may draw the full pool.
 func (s *Scheduler) fits(j Job) bool {
-	return j.Request <= s.free && j.AIRequest <= s.window
+	if j.AIRequest > s.window || j.Request > s.free {
+		return false
+	}
+	if j.Priority < PriorityUser {
+		used := s.capacity - s.free
+		if used+j.Request > s.softBudget {
+			return false
+		}
+	}
+	return true
 }
 
 // Free reports the currently unreserved memory (bytes).
