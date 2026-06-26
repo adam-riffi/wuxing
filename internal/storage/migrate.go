@@ -5,27 +5,24 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
-//go:embed migrations/*.sql
+//go:embed migrations/sqlite/*.sql migrations/postgres/*.sql
 var migrationFS embed.FS
 
-// migrate applies every embedded migration not yet recorded, in lexical order,
-// each in its own transaction. Migrations are forward-only: a file, once
-// applied, is never re-run or rolled back (history accumulates; the schema only
-// moves forward).
+// migrate applies every embedded migration for the store's dialect that is not
+// yet recorded, in lexical order, each in its own transaction. Forward-only: a
+// file, once applied, is never re-run or rolled back.
 func (db *DB) migrate() error {
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version    TEXT PRIMARY KEY,
-			applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("storage: ensure schema_migrations: %w", err)
 	}
 
-	entries, err := migrationFS.ReadDir("migrations")
+	dir := "migrations/" + db.Dialect.migrations
+	entries, err := migrationFS.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("storage: read migrations: %w", err)
+		return fmt.Errorf("storage: read migrations %q: %w", dir, err)
 	}
 	versions := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -37,21 +34,21 @@ func (db *DB) migrate() error {
 
 	for _, v := range versions {
 		var applied int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, v).Scan(&applied); err != nil {
+		if err := db.QueryRow(db.Rebind(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`), v).Scan(&applied); err != nil {
 			return fmt.Errorf("storage: check migration %q: %w", v, err)
 		}
 		if applied > 0 {
 			continue
 		}
-		if err := db.applyMigration(v); err != nil {
+		if err := db.applyMigration(dir, v); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (db *DB) applyMigration(version string) error {
-	body, err := migrationFS.ReadFile("migrations/" + version)
+func (db *DB) applyMigration(dir, version string) error {
+	body, err := migrationFS.ReadFile(dir + "/" + version)
 	if err != nil {
 		return fmt.Errorf("storage: read migration %q: %w", version, err)
 	}
@@ -64,7 +61,7 @@ func (db *DB) applyMigration(version string) error {
 		_ = tx.Rollback()
 		return fmt.Errorf("storage: apply %q: %w", version, err)
 	}
-	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES(?)`, version); err != nil {
+	if _, err := tx.Exec(db.Rebind(`INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)`), version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("storage: record %q: %w", version, err)
 	}

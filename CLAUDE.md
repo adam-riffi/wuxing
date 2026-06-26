@@ -43,7 +43,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | connectors | `internal/tools/connectors` | real sqlite tool on the bus: write/read with grant enforcement + crossing/mutation metering |
 | ai | `internal/tools/ai` | infer tool on the bus behind a Backend interface (Codex driver deferred); cost fact at incur-time |
 | MTG e2e | `test/e2e/mtg_test.go` | the worked example through the real substrate: trigger → interpreter → connectors write → fact → triggers (sequence inherited) → ai; one sequence_id across the cascade |
-| storage | `internal/storage` | pure-Go sqlite open + forward-only embedded migrator (schema_migrations) |
+| storage | `internal/storage` | backend-configurable behind a `Dialect` (SQLite embedded **or** Postgres server), DSN-driven; forward-only per-dialect migrator; `?`→`$N` rebind. Postgres execution pending verification (testcontainers/Supabase) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
@@ -94,9 +94,15 @@ real-world I/O glue and content:
 1. **integration glue** — real Docker `Engine` behind the launcher; triggers'
    cron clock + the bus subscription that feeds `OnEvent`; a real Codex `ai`
    backend; a real connector `Meter` writing the crossing/mutation fact tables.
-2. **storage detail/admin tables** — connector crossing/mutation + ai-call detail
+2. **Postgres backend** — the storage `Dialect` abstraction + Postgres migrations
+   are in place (DSN-driven, so Supabase/local Postgres is just `.env`). Next:
+   verify the Postgres path (testcontainers in CI's integration job, or against a
+   real Supabase DSN), wire pgx simple-protocol for the multi-statement
+   migrations, port the connector to Postgres, and open the fact store (WAL for
+   sqlite) on daemon boot so DBeaver/Tableau can read it live.
+3. **storage detail/admin tables** — connector crossing/mutation + ai-call detail
    facts; the service index/manifest admin tables.
-3. **content** — first-party service cfgs (messenger, state) and the thin
+4. **content** — first-party service cfgs (messenger, state) and the thin
    `library` tool. (Per-step `with:` args are done — cfgs are self-driving: the
    interpreter merges a step's args with the accumulated facts into its payload.)
 

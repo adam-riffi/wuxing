@@ -1,7 +1,6 @@
 -- The lineage spine: one row per causal chain (sequence), per triggered
 -- execution (run), and per unit of work (session). Each row is opened on start
--- and closed once on completion; causal order is carried by the *_order fields,
--- never inferred from the timestamps (which are kept only for duration).
+-- and closed once on completion; causal order is carried by the *_order fields.
 
 CREATE TABLE wuxing_ft_sequence (
     sequence_id       TEXT PRIMARY KEY,
@@ -45,9 +44,8 @@ CREATE TABLE wuxing_ft_session (
 
 CREATE INDEX idx_ft_session_run ON wuxing_ft_session (run_id, run_order);
 
--- Append-only enforcement. A spine row may be closed exactly once (the single
--- permitted state transition); it can never be re-edited or deleted. You don't
--- rewrite history — you file a correcting fact.
+-- Append-only enforcement: a spine row may be closed exactly once and never
+-- deleted. You don't rewrite history — you file a correcting fact.
 CREATE TRIGGER wuxing_ft_sequence_close_once BEFORE UPDATE ON wuxing_ft_sequence
 WHEN OLD.closed_at IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'wuxing_ft_sequence row already closed'); END;
