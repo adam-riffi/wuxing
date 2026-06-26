@@ -25,9 +25,14 @@ feat/<slug> ──PR──▶ dev ──(CI green)──▶  ... ──PR──�
 3. When `dev` is ready to ship, open a **promotion PR `dev` → `main`**. CI runs again on that PR; use a **merge commit** (not squash) so `main`'s history references the real `dev` commits.
 4. Tag `main` with `v*.*.*` to cut a release (triggers `release.yml`).
 
-### Required status checks
+### Sanity vs. required checks
 
-The same checks gate **both** the `feat → dev` PRs and the `dev → main` promotion PR
+Two tiers of CI:
+
+- **Sanity** (`sanity.yml`) — runs on every push to a feature branch (lint + unit + build, one OS). A fast pre-PR signal; *not* a merge gate.
+- **Full** (`ci.yml`) — runs on every PR and on pushes to `dev`/`main` (lint, 3-OS unit + build, integration, commit-lint, coverage floor). These are the merge gate.
+
+The full checks gate **both** the `feat → dev` PRs and the `dev → main` promotion PR
 (enforced by branch protection on each branch):
 
 - `lint`
