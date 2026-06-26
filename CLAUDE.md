@@ -40,6 +40,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | launcher | `internal/kernel/launcher` | Engine interface + launch logic: provision/sweep scratch, inject env, apply mem limit, track instances (Docker driver deferred) |
 | cfg schema | `internal/contracts/cfg` | service cfg model + YAML parse + Validate against a Vocabulary (derived from docs/vocabulary) |
 | interpreter | `internal/kernel/interpreter` | read cfg → route: Call (validate vs vocab → bus), Run (workflow stepping + branch on emitted fact), Successors (condition eval) |
+| connectors | `internal/tools/connectors` | real sqlite tool on the bus: write/read with grant enforcement + crossing/mutation metering |
 | storage | `internal/storage` | pure-Go sqlite open + forward-only embedded migrator (schema_migrations) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
@@ -47,7 +48,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 
 The kernel's seven faces are all implemented (bus, lineage, scheduler, sessions,
 triggers, launcher logic, interpreter). Stubs still `doc.go`-only:
-`tools/{library,graph,processors,connectors,ai}`, `contracts/{bus,sdk}`, `sdk`,
+`tools/{library,graph,processors,ai}`, `contracts/{bus,sdk}`, `sdk`,
 `storage/{dims,artifacts}`.
 
 ## Branch & PR workflow (IMPORTANT)
@@ -84,12 +85,13 @@ In rough dependency order (kernel faces + the tool vocabulary are done):
 The kernel critical path (vocabulary → cfg grammar → contracts → interpreter) is
 complete. Remaining work is wiring + content:
 
-1. **tools** — give `library`/`connectors`/`ai` real handlers registered on the
-   bus (currently `doc.go` stubs); the interpreter already routes to them by name.
+1. **tools** — `connectors` is real (sqlite write/read, grant-enforced, metered).
+   Next: the `ai` tool (Codex CLI driver for `infer`), then thin `library`.
 2. **first-party services** (messenger, state) and the **MTG e2e** — the worked
    example end-to-end (checker → connector write → event trigger → notifier).
 3. **integration glue** — real Docker `Engine`, triggers' cron clock + bus
-   subscription, the SDK contract, the storage detail/admin tables.
+   subscription, the SDK contract, the storage detail/admin tables (incl. the
+   connector crossing/mutation fact tables the Meter feeds).
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving
