@@ -3,7 +3,13 @@ package scheduler
 import (
 	"reflect"
 	"testing"
+	"time"
 )
+
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 // recorder captures admission order through the onAdmit callback.
 type recorder struct{ ids []string }
@@ -206,6 +212,82 @@ func TestScheduler_RefillCapsAtWindowCapacity(t *testing.T) {
 	s.RefillWindow(50) // way over capacity
 	if s.Window() != 10 {
 		t.Errorf("window: got %d want 10 (capped)", s.Window())
+	}
+}
+
+func TestScheduler_EscalateOnExpiry(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	rec := &recorder{}
+	s := New(10, rec.admit, WithClock(clk.now))
+	_ = s.Submit(Job{ID: "r", Request: 10}) // fills capacity
+
+	_ = s.Submit(Job{ID: "first", Request: 5})                                                  // background, no patience limit
+	_ = s.Submit(Job{ID: "second", Request: 5, MaxWait: time.Minute, OnExpiry: ExpiryEscalate}) // background
+
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"first", "second"}) {
+		t.Fatalf("initial queue: got %v want [first second]", got)
+	}
+
+	clk.advance(2 * time.Minute)
+	s.Expire() // second has waited too long -> escalates above first
+
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"second", "first"}) {
+		t.Fatalf("queue after escalate: got %v want [second first]", got)
+	}
+
+	s.Complete("r")
+	if !reflect.DeepEqual(rec.ids, []string{"r", "second", "first"}) {
+		t.Errorf("admission order: got %v want [r second first]", rec.ids)
+	}
+}
+
+func TestScheduler_FailOnExpiry(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	var expired []string
+	s := New(
+		10, nil,
+		WithClock(clk.now),
+		WithOnExpire(func(j Job) { expired = append(expired, j.ID) }),
+	)
+	_ = s.Submit(Job{ID: "r", Request: 10}) // fills capacity
+	_ = s.Submit(Job{ID: "drop", Request: 5, MaxWait: time.Minute, OnExpiry: ExpiryFail})
+
+	clk.advance(90 * time.Second)
+	s.Expire()
+
+	if got := s.Queued(); len(got) != 0 {
+		t.Errorf("queue: got %v want empty (drop should be failed out)", got)
+	}
+	if !reflect.DeepEqual(expired, []string{"drop"}) {
+		t.Errorf("onExpire: got %v want [drop]", expired)
+	}
+}
+
+func TestScheduler_NoExpiryBeforeMaxWait(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	s := New(10, nil, WithClock(clk.now))
+	_ = s.Submit(Job{ID: "r", Request: 10})
+	_ = s.Submit(Job{ID: "wait", Request: 5, MaxWait: time.Minute, OnExpiry: ExpiryFail})
+
+	clk.advance(30 * time.Second) // not yet expired
+	s.Expire()
+
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"wait"}) {
+		t.Errorf("queue: got %v want [wait] (still patient)", got)
+	}
+}
+
+func TestScheduler_InfinitePatience(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	s := New(10, nil, WithClock(clk.now))
+	_ = s.Submit(Job{ID: "r", Request: 10})
+	_ = s.Submit(Job{ID: "patient", Request: 5}) // MaxWait 0 -> never expires
+
+	clk.advance(365 * 24 * time.Hour)
+	s.Expire()
+
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"patient"}) {
+		t.Errorf("queue: got %v want [patient] (zero MaxWait never expires)", got)
 	}
 }
 

@@ -15,13 +15,15 @@
 // it cannot use; the head is retried first on every change, so it keeps its
 // claim. Backfill is opportunistic — without job-duration estimates it cannot
 // prove a backfilled job won't delay the head, so it only ever uses room the
-// head currently cannot. Patience and escalation build on it.
+// head currently cannot. Patience (max_wait) with escalate/fail on expiry layers
+// on top via Expire; overclock into a reserve band is still to come.
 package scheduler
 
 import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Priority is a job's scheduling class. Higher classes are admitted first;
@@ -33,6 +35,16 @@ const (
 	PriorityBackground Priority = iota
 	// PriorityUser is user-triggered work, admitted ahead of background.
 	PriorityUser
+)
+
+// Expiry is what happens to a queued job that waits past its MaxWait.
+type Expiry int
+
+const (
+	// ExpiryEscalate ages the job's priority up one class (the lean default).
+	ExpiryEscalate Expiry = iota
+	// ExpiryFail drops the job from the queue and reports it via the onExpire callback.
+	ExpiryFail
 )
 
 // Job is the unit of scheduling and sizing.
@@ -48,6 +60,11 @@ type Job struct {
 	// AI job is admitted only when both memory and window have room. The window
 	// is not returned on completion — it refills on a clock via RefillWindow.
 	AIRequest int64
+	// MaxWait is how long the job tolerates queueing before its OnExpiry policy
+	// fires (0 means infinite patience).
+	MaxWait time.Duration
+	// OnExpiry is applied when the job has waited past MaxWait.
+	OnExpiry Expiry
 }
 
 // Scheduler admits jobs against a fixed memory capacity. It is safe for
@@ -57,12 +74,15 @@ type Scheduler struct {
 	capacity  int64
 	windowCap int64
 	onAdmit   func(Job)
+	onExpire  func(Job)
+	now       func() time.Time
 
-	mu      sync.Mutex
-	free    int64
-	window  int64
-	queue   []Job
-	running map[string]Job
+	mu         sync.Mutex
+	free       int64
+	window     int64
+	queue      []Job
+	running    map[string]Job
+	enqueuedAt map[string]time.Time
 }
 
 // Option configures a Scheduler.
@@ -78,6 +98,25 @@ func WithAIWindow(capacity int64) Option {
 	}
 }
 
+// WithOnExpire registers a callback invoked once per job dropped by an
+// ExpiryFail policy (so the kernel can record the outcome).
+func WithOnExpire(cb func(Job)) Option {
+	return func(s *Scheduler) {
+		if cb != nil {
+			s.onExpire = cb
+		}
+	}
+}
+
+// WithClock overrides the clock used to age queued jobs (for tests).
+func WithClock(now func() time.Time) Option {
+	return func(s *Scheduler) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 // New returns a scheduler with the given memory capacity (bytes). onAdmit is
 // called once per job as it is admitted; pass nil to ignore admissions and poll
 // Running instead.
@@ -86,10 +125,13 @@ func New(capacity int64, onAdmit func(Job), opts ...Option) *Scheduler {
 		onAdmit = func(Job) {}
 	}
 	s := &Scheduler{
-		capacity: capacity,
-		onAdmit:  onAdmit,
-		free:     capacity,
-		running:  make(map[string]Job),
+		capacity:   capacity,
+		onAdmit:    onAdmit,
+		onExpire:   func(Job) {},
+		now:        time.Now,
+		free:       capacity,
+		running:    make(map[string]Job),
+		enqueuedAt: make(map[string]time.Time),
 	}
 	for _, o := range opts {
 		o(s)
@@ -165,6 +207,7 @@ func (s *Scheduler) enqueue(job Job) {
 	s.queue = append(s.queue, Job{})
 	copy(s.queue[i+1:], s.queue[i:])
 	s.queue[i] = job
+	s.enqueuedAt[job.ID] = s.now()
 }
 
 // pump admits every waiting job that fits, scanning in priority/FCFS order. The
@@ -182,6 +225,7 @@ func (s *Scheduler) pump() []Job {
 		s.free -= job.Request
 		s.window -= job.AIRequest
 		s.running[job.ID] = job
+		delete(s.enqueuedAt, job.ID)
 		admitted = append(admitted, job)
 		s.queue = append(s.queue[:i], s.queue[i+1:]...) // queue shifts into i
 	}
@@ -205,6 +249,51 @@ func (s *Scheduler) Window() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.window
+}
+
+// Expire applies each waiting job's MaxWait/OnExpiry policy: a job queued longer
+// than its MaxWait either escalates (priority up one class, wait timer reset) or
+// fails (dropped, reported via the onExpire callback). It then admits whatever
+// the re-ordering makes room for. Drive it periodically from the kernel.
+func (s *Scheduler) Expire() {
+	s.mu.Lock()
+	now := s.now()
+	var failed []Job
+	escalated := false
+	kept := s.queue[:0]
+	for _, job := range s.queue {
+		at, ok := s.enqueuedAt[job.ID]
+		if job.MaxWait > 0 && ok && now.Sub(at) >= job.MaxWait {
+			switch job.OnExpiry {
+			case ExpiryFail:
+				delete(s.enqueuedAt, job.ID)
+				failed = append(failed, job)
+				continue
+			case ExpiryEscalate:
+				if job.Priority < PriorityUser {
+					job.Priority++
+					escalated = true
+				}
+				s.enqueuedAt[job.ID] = now // reset the wait timer
+			}
+		}
+		kept = append(kept, job)
+	}
+	s.queue = kept
+	if escalated {
+		sort.SliceStable(s.queue, func(i, j int) bool {
+			return s.queue[i].Priority > s.queue[j].Priority
+		})
+	}
+	admitted := s.pump()
+	s.mu.Unlock()
+
+	for _, j := range admitted {
+		s.onAdmit(j)
+	}
+	for _, j := range failed {
+		s.onExpire(j)
+	}
 }
 
 // RefillWindow returns amount of AI-quota window (the clock-driven refill),
