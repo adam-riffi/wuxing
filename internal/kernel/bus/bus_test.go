@@ -66,14 +66,20 @@ func TestBus_CallHandlerError(t *testing.T) {
 
 func TestBus_CallContextCancelled(t *testing.T) {
 	b := New()
-	_ = b.Register("slow", func(ctx context.Context, call Envelope) Envelope {
-		<-ctx.Done() // never replies until cancelled
-		return call.ReplyError(ctx.Err())
+	release := make(chan struct{})
+	defer close(release)
+	// A handler that ignores its context and hangs until the test ends. Call
+	// must still return when its own context is cancelled rather than block on
+	// the hung handler forever.
+	_ = b.Register("hung", func(_ context.Context, call Envelope) Envelope {
+		<-release
+		return call.Reply(nil)
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go cancel()
-	_, err := b.Call(ctx, NewCall(testStamp(), "slow", "op", nil))
+	cancel() // cancelled before the call; the hung handler never replies
+
+	_, err := b.Call(ctx, NewCall(testStamp(), "hung", "op", nil))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
