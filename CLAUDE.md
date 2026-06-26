@@ -48,7 +48,8 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | detail facts | `internal/storage/facts` | connector crossing/mutation + ai-call tables (migration 0003, both dialects) + `Detail` access layer keyed by the lineage stamp |
 | metering | `internal/metering` | `StoreMeter` implements connectors.Meter + ai.Meter; tool facts persist to the detail tables, stamped from the envelope lineage |
-| daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
+| daemon | `cmd/wuxing` | boots, loads manifest, opens the fact store (`--store`, WAL), assembles the kernel via `kernel.Assemble`, logs readiness, clean shutdown |
+| kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
 
 The kernel's seven faces are all implemented (bus, lineage, scheduler, sessions,
@@ -103,15 +104,16 @@ real-world I/O glue and content:
    real Supabase DSN), wire pgx simple-protocol for the multi-statement
    migrations, port the connector to Postgres, and open the fact store (WAL for
    sqlite) on daemon boot so DBeaver/Tableau can read it live.
-3. **daemon assembly** — wire `cmd/wuxing` to assemble the faces: open the fact
-   store (WAL for sqlite) on boot, construct the bus + scheduler + sessions +
-   triggers + interpreter + library, register the connectors+ai tools with a
-   `StoreMeter`, load the manifest, log readiness, shut down cleanly. (The thin
-   `library` catalog and tool-fact persistence are done.) Then the
-   service-index/manifest admin tables.
-4. **content** — first-party service cfgs (messenger, state) and the thin
-   `library` tool. (Per-step `with:` args are done — cfgs are self-driving: the
-   interpreter merges a step's args with the accumulated facts into its payload.)
+3. **the run loop** — the daemon now assembles the kernel (`kernel.Assemble`) and
+   opens the WAL fact store on boot. Next: drive it — wire the scheduler's
+   `onAdmit` to launch admitted jobs, the triggers' `onFire` to start runs, the
+   bus subscription that feeds `triggers.OnEvent`, register the connectors+ai
+   tools (needs their backends/config), and stamp the spine via lineage as runs
+   execute. Much of this needs the integration glue below.
+4. **admin tables** — the service-index/manifest admin tables.
+5. **content** — first-party service cfgs (messenger, state). (Per-step `with:`
+   args are done — cfgs are self-driving: the interpreter merges a step's args
+   with the accumulated facts into its payload.)
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving
