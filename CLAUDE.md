@@ -38,13 +38,14 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | sessions | `internal/kernel/sessions` | running registry of live instances; the drain check (HasRunning) the library's deregister consults |
 | triggers | `internal/kernel/triggers` | cron + event rules; sequence propagation (external opens a new sequence, event inherits the cause's) |
 | launcher | `internal/kernel/launcher` | Engine interface + launch logic: provision/sweep scratch, inject env, apply mem limit, track instances (Docker driver deferred) |
+| cfg schema | `internal/contracts/cfg` | service cfg model + YAML parse + Validate against a Vocabulary (derived from docs/vocabulary) |
 | storage | `internal/storage` | pure-Go sqlite open + forward-only embedded migrator (schema_migrations) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
 
 Stubs still `doc.go`-only: `kernel/interpreter`,
-`tools/{library,graph,processors,connectors,ai}`, `contracts/{cfg,bus,sdk}`,
+`tools/{library,graph,processors,connectors,ai}`, `contracts/{bus,sdk}`,
 `sdk`, `storage/{dims,artifacts}`.
 
 ## Branch & PR workflow (IMPORTANT)
@@ -78,12 +79,15 @@ floor on PRs and dev/main), `release.yml`, `codeql.yml`.
 
 In rough dependency order (kernel faces + the tool vocabulary are done):
 
-1. **contracts** (`contracts/{cfg,bus,sdk}`) — cfg schema (derived from the
-   vocabulary), bus envelope, SDK contract; then the **interpreter**.
+1. **interpreter** (`kernel/interpreter`) — parse a cfg, validate each
+   tool.operation against the vocabulary, route the call over the bus, feed the
+   return forward, evaluate successor conditions on the emitted fact.
 2. **first-party services** (messenger, state) and the **MTG e2e**.
 
-The tool vocabulary catalogs are drafted in `docs/vocabulary/` (ai, connectors,
-library); graph/processors stay minimal/blocked per the design.
+The cfg schema (`contracts/cfg`) is done; the bus envelope already lives in
+`kernel/bus`; the SDK contract (`contracts/sdk`) is a thin follow-up. The tool
+vocabulary is drafted in `docs/vocabulary/` (ai, connectors, library);
+graph/processors stay minimal/blocked per the design.
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving
