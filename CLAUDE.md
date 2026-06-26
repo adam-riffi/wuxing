@@ -42,6 +42,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | interpreter | `internal/kernel/interpreter` | read cfg → route: Call (validate vs vocab → bus), Run (workflow stepping + branch on emitted fact), Successors (condition eval) |
 | connectors | `internal/tools/connectors` | real sqlite tool on the bus: write/read with grant enforcement + crossing/mutation metering |
 | ai | `internal/tools/ai` | infer tool on the bus behind a Backend interface (Codex driver deferred); cost fact at incur-time |
+| library | `internal/tools/library` | in-memory Catalog: register/deregister + serve definition/successors/triggers/list/diff (core-consulted) |
 | MTG e2e | `test/e2e/mtg_test.go` | the worked example through the real substrate: trigger → interpreter → connectors write → fact → triggers (sequence inherited) → ai; one sequence_id across the cascade |
 | storage | `internal/storage` | backend-configurable behind a `Dialect` (SQLite embedded **or** Postgres server), DSN-driven; forward-only per-dialect migrator; `?`→`$N` rebind. Postgres execution pending verification (testcontainers/Supabase) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
@@ -52,7 +53,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 
 The kernel's seven faces are all implemented (bus, lineage, scheduler, sessions,
 triggers, launcher logic, interpreter). Stubs still `doc.go`-only:
-`tools/{library,graph,processors}`, `contracts/{bus,sdk}`, `sdk`,
+`tools/{graph,processors}`, `contracts/{bus,sdk}`, `sdk`,
 `storage/{dims,artifacts}`.
 
 ## Branch & PR workflow (IMPORTANT)
@@ -102,12 +103,12 @@ real-world I/O glue and content:
    real Supabase DSN), wire pgx simple-protocol for the multi-statement
    migrations, port the connector to Postgres, and open the fact store (WAL for
    sqlite) on daemon boot so DBeaver/Tableau can read it live.
-3. **thin `library` tool + daemon assembly** — give `library` register/serve
-   handlers on the bus; then wire the daemon (`cmd/wuxing`) to assemble the
-   faces: open the fact store (WAL for sqlite) on boot, construct the bus +
-   scheduler + sessions + triggers + interpreter, register the tools with a
-   `StoreMeter`, and load the manifest. (Tool-fact persistence via `StoreMeter`
-   is done.) Then the service-index/manifest admin tables.
+3. **daemon assembly** — wire `cmd/wuxing` to assemble the faces: open the fact
+   store (WAL for sqlite) on boot, construct the bus + scheduler + sessions +
+   triggers + interpreter + library, register the connectors+ai tools with a
+   `StoreMeter`, load the manifest, log readiness, shut down cleanly. (The thin
+   `library` catalog and tool-fact persistence are done.) Then the
+   service-index/manifest admin tables.
 4. **content** — first-party service cfgs (messenger, state) and the thin
    `library` tool. (Per-step `with:` args are done — cfgs are self-driving: the
    interpreter merges a step's args with the accumulated facts into its payload.)
