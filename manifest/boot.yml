@@ -1,0 +1,28 @@
+# wuxing boot manifest — the source-level list of tools the kernel loads at boot.
+#
+# This is one of the three registries (boot manifest · library index · running
+# registry). It names the platform's compiled tools; it is edited in development,
+# never at runtime — disabling a tool equals deleting it. See
+# docs/architecture/wuxing-concept.md ("The interpreter model").
+#
+# Phase 0: most tools are stubs (doc.go only). They are listed here so the
+# manifest loader and the daemon boot path can be exercised end to end.
+
+version: 0
+
+tools:
+  - name: library
+    package: internal/tools/library
+    status: stub      # Phase 5
+  - name: connectors
+    package: internal/tools/connectors
+    status: stub      # Phase 5
+  - name: ai
+    package: internal/tools/ai
+    status: stub      # Phase 5
+  - name: processors
+    package: internal/tools/processors
+    status: stub      # Phase 5
+  - name: graph
+    package: internal/tools/graph
+    status: stub      # Phase 6 (pending interpreter <-> graph boundary)

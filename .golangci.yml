@@ -1,0 +1,41 @@
+# golangci-lint configuration for wuxing (schema v2).
+# Run: golangci-lint run   (or: make lint)
+version: "2"
+
+run:
+  tests: true
+
+linters:
+  enable:
+    - errcheck      # unchecked errors
+    - govet         # suspicious constructs
+    - staticcheck   # the staticcheck suite (incl. simple + stylecheck)
+    - revive        # style / lint rules
+    - gosec         # security issues
+    - ineffassign   # ineffectual assignments
+    - unused        # unused code
+  settings:
+    revive:
+      rules:
+        - name: exported
+  exclusions:
+    rules:
+      # Test code may use weaker constructs gosec flags (e.g. 0o600 fixtures).
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt       # stricter gofmt
+    - goimports     # import grouping + formatting
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes:
+        - github.com/adam-riffi/wuxing
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

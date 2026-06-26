@@ -1,0 +1,21 @@
+# Local development: the wuxing kernel daemon with a persistent state volume.
+# Usage: docker compose up --build
+
+services:
+  wuxing:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: wuxing:dev
+    container_name: wuxing
+    # The daemon idles at Phase 0; later phases add the bus, scheduler, and the
+    # Docker socket mount the launcher needs to run service containers.
+    volumes:
+      - wuxing-state:/home/nonroot/.wuxing
+    environment:
+      - TZ=UTC
+    restart: unless-stopped
+
+volumes:
+  wuxing-state:
