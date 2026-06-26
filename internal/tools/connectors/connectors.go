@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/adam-riffi/wuxing/internal/kernel/bus"
+	"github.com/adam-riffi/wuxing/internal/kernel/lineage"
 )
 
 // Grant authorizes access to one DATABASE.TABLE.
@@ -29,6 +30,7 @@ func (g Grant) target() string { return g.Database + "." + g.Table }
 
 // Crossing is the movement fact emitted per call (audit + volumetry).
 type Crossing struct {
+	Stamp     lineage.Stamp
 	Target    string
 	Direction string // "in" | "out"
 	Rows      int
@@ -36,6 +38,7 @@ type Crossing struct {
 
 // Mutation is the state-delta fact for a mutating write.
 type Mutation struct {
+	Stamp        lineage.Stamp
 	Target       string
 	RowsInserted int
 }
@@ -106,8 +109,8 @@ func (c *Connector) handleWrite(ctx context.Context, e bus.Envelope) bus.Envelop
 	if err != nil {
 		return e.ReplyError(err)
 	}
-	c.meter.Crossing(Crossing{Target: req.Target, Direction: "out", Rows: n})
-	c.meter.Mutation(Mutation{Target: req.Target, RowsInserted: n})
+	c.meter.Crossing(Crossing{Stamp: e.Stamp, Target: req.Target, Direction: "out", Rows: n})
+	c.meter.Mutation(Mutation{Stamp: e.Stamp, Target: req.Target, RowsInserted: n})
 
 	out, _ := json.Marshal(map[string]int{"rows_inserted": n})
 	return e.Reply(out)
@@ -129,7 +132,7 @@ func (c *Connector) handleRead(ctx context.Context, e bus.Envelope) bus.Envelope
 	if err != nil {
 		return e.ReplyError(err)
 	}
-	c.meter.Crossing(Crossing{Target: req.Target, Direction: "in", Rows: len(rows)})
+	c.meter.Crossing(Crossing{Stamp: e.Stamp, Target: req.Target, Direction: "in", Rows: len(rows)})
 
 	out, _ := json.Marshal(map[string]any{"rows": rows})
 	return e.Reply(out)
