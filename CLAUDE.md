@@ -38,7 +38,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | sessions | `internal/kernel/sessions` | running registry of live instances; the drain check (HasRunning) the library's deregister consults |
 | triggers | `internal/kernel/triggers` | cron + event rules; sequence propagation (external opens a new sequence, event inherits the cause's) |
 | launcher | `internal/kernel/launcher` | Engine interface + launch logic: provision/sweep scratch, inject env, apply mem limit, track instances (Docker driver deferred) |
-| cfg schema | `internal/contracts/cfg` | service cfg model + YAML parse + Validate against a Vocabulary (derived from docs/vocabulary) |
+| cfg schema | `internal/contracts/cfg` | service cfg model (incl. per-step `with:` args) + YAML parse + Validate against a Vocabulary (derived from docs/vocabulary) |
 | interpreter | `internal/kernel/interpreter` | read cfg → route: Call (validate vs vocab → bus), Run (workflow stepping + branch on emitted fact), Successors (condition eval) |
 | connectors | `internal/tools/connectors` | real sqlite tool on the bus: write/read with grant enforcement + crossing/mutation metering |
 | ai | `internal/tools/ai` | infer tool on the bus behind a Backend interface (Codex driver deferred); cost fact at incur-time |
@@ -96,9 +96,9 @@ real-world I/O glue and content:
    backend; a real connector `Meter` writing the crossing/mutation fact tables.
 2. **storage detail/admin tables** — connector crossing/mutation + ai-call detail
    facts; the service index/manifest admin tables.
-3. **content** — first-party service cfgs (messenger, state), the thin `library`
-   tool, and `cfg.Step` call arguments (`with:`) so cfgs are fully self-driving
-   rather than relying on fact feed-forward.
+3. **content** — first-party service cfgs (messenger, state) and the thin
+   `library` tool. (Per-step `with:` args are done — cfgs are self-driving: the
+   interpreter merges a step's args with the accumulated facts into its payload.)
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving
