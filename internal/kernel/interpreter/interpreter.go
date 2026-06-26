@@ -61,7 +61,6 @@ func (in *Interpreter) Run(ctx context.Context, svc *cfg.Service, stamp lineage.
 	}
 
 	acc := Fact{}
-	var payload json.RawMessage
 	cur := svc.Workflow[0].ID
 	order := 0
 
@@ -72,12 +71,11 @@ func (in *Interpreter) Run(ctx context.Context, svc *cfg.Service, stamp lineage.
 		}
 
 		callStamp := stamp.WithCall(in.minter.CallID(), order)
-		out, err := in.Call(ctx, callStamp, step.Tool, step.Operation, payload)
+		out, err := in.Call(ctx, callStamp, step.Tool, step.Operation, buildPayload(acc, step.With))
 		if err != nil {
 			return nil, err
 		}
 		mergeFact(acc, out)
-		payload = out
 
 		cur, err = nextStep(step, acc)
 		if err != nil {
@@ -86,6 +84,23 @@ func (in *Interpreter) Run(ctx context.Context, svc *cfg.Service, stamp lineage.
 		order++
 	}
 	return acc, nil
+}
+
+// buildPayload composes a step's call payload: the accumulated facts so far (so
+// earlier outputs feed forward), overlaid with the step's declared With args.
+func buildPayload(acc Fact, with map[string]any) json.RawMessage {
+	if len(acc) == 0 && len(with) == 0 {
+		return nil
+	}
+	m := make(map[string]any, len(acc)+len(with))
+	for k, v := range acc {
+		m[k] = v
+	}
+	for k, v := range with {
+		m[k] = v
+	}
+	b, _ := json.Marshal(m)
+	return b
 }
 
 // Successors returns the successor declarations whose conditions hold on the

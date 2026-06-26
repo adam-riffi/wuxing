@@ -49,11 +49,12 @@ type Trigger struct {
 // Step is one node of the service's internal workflow — a tool.operation call,
 // optionally branching on its emitted value.
 type Step struct {
-	ID        string   `yaml:"id"`
-	Tool      string   `yaml:"tool"`
-	Operation string   `yaml:"operation"`
-	Next      string   `yaml:"next"`   // unconditional successor step id
-	Branch    []Branch `yaml:"branch"` // conditional routing on the step's output
+	ID        string         `yaml:"id"`
+	Tool      string         `yaml:"tool"`
+	Operation string         `yaml:"operation"`
+	With      map[string]any `yaml:"with"`   // call arguments for this step
+	Next      string         `yaml:"next"`   // unconditional successor step id
+	Branch    []Branch       `yaml:"branch"` // conditional routing on the step's output
 }
 
 // Branch routes to a step when a condition on the previous step's output holds.

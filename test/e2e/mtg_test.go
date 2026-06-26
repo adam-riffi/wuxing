@@ -69,7 +69,7 @@ func TestMTGNewSetNotifier(t *testing.T) {
 	connMeter := &connRec{}
 	aiMeter := &aiRec{}
 	aiBackend := &orderedAI{responses: []string{
-		`{"new_set":true,"target":"mtg.cards","rows":[{"name":"Sol Ring","set_code":"C21"}]}`,
+		`{"new_set":true,"rows":[{"name":"Sol Ring","set_code":"C21"}]}`,
 		`"A new MTG set just dropped: C21"`,
 	}}
 
@@ -91,8 +91,9 @@ func TestMTGNewSetNotifier(t *testing.T) {
 	mtg := &cfg.Service{
 		Name: "mtg",
 		Workflow: []cfg.Step{
-			{ID: "check", Tool: "ai", Operation: "infer", Branch: []cfg.Branch{{When: "new_set == true", Goto: "write"}}},
-			{ID: "write", Tool: "connectors", Operation: "write"},
+			{ID: "check", Tool: "ai", Operation: "infer", With: map[string]any{"prompt": "check scryfall"}, Branch: []cfg.Branch{{When: "new_set == true", Goto: "write"}}},
+			// The checker emits the rows; the write step declares its target.
+			{ID: "write", Tool: "connectors", Operation: "write", With: map[string]any{"target": "mtg.cards"}},
 		},
 		Successors: []cfg.Successor{{Service: "notifier", Topic: "mtg-db updated", When: "new_set == true"}},
 	}
