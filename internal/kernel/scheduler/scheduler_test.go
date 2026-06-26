@@ -291,6 +291,44 @@ func TestScheduler_InfinitePatience(t *testing.T) {
 	}
 }
 
+func TestScheduler_ReserveBandIsPrivilegedOnly(t *testing.T) {
+	s := New(10, nil, WithReserve(3)) // soft budget 7, reserve band [7,10]
+
+	_ = s.Submit(Job{ID: "a", Request: 7}) // background fills the soft budget; free=3
+	_ = s.Submit(Job{ID: "b", Request: 2}) // background may not enter the reserve
+
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"a"}) {
+		t.Fatalf("running: got %v want [a]", got)
+	}
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Fatalf("queued: got %v want [b] (background fenced from reserve)", got)
+	}
+
+	// A user-class job may draw the reserve band.
+	_ = s.Submit(Job{ID: "u", Priority: PriorityUser, Request: 2})
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"a", "u"}) {
+		t.Errorf("running: got %v want [a u] (user uses reserve)", got)
+	}
+}
+
+func TestScheduler_EscalatedJobEntersReserve(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	s := New(10, nil, WithReserve(4), WithClock(clk.now)) // soft budget 6
+
+	// A big background job fits memory (7<=10) but not the soft budget (7>6).
+	_ = s.Submit(Job{ID: "big", Request: 7, MaxWait: time.Minute, OnExpiry: ExpiryEscalate})
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"big"}) {
+		t.Fatalf("queued: got %v want [big] (over soft budget)", got)
+	}
+
+	clk.advance(2 * time.Minute)
+	s.Expire() // starving job escalates to user class -> may enter the reserve
+
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"big"}) {
+		t.Errorf("running: got %v want [big] (escalation granted reserve access)", got)
+	}
+}
+
 func TestScheduler_Rejects(t *testing.T) {
 	s := New(100, nil)
 	cases := map[string]Job{
