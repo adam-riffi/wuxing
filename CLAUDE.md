@@ -42,6 +42,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | interpreter | `internal/kernel/interpreter` | read cfg → route: Call (validate vs vocab → bus), Run (workflow stepping + branch on emitted fact), Successors (condition eval) |
 | connectors | `internal/tools/connectors` | real sqlite tool on the bus: write/read with grant enforcement + crossing/mutation metering |
 | ai | `internal/tools/ai` | infer tool on the bus behind a Backend interface (Codex driver deferred); cost fact at incur-time |
+| MTG e2e | `test/e2e/mtg_test.go` | the worked example through the real substrate: trigger → interpreter → connectors write → fact → triggers (sequence inherited) → ai; one sequence_id across the cascade |
 | storage | `internal/storage` | pure-Go sqlite open + forward-only embedded migrator (schema_migrations) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
@@ -86,14 +87,18 @@ In rough dependency order (kernel faces + the tool vocabulary are done):
 The kernel critical path (vocabulary → cfg grammar → contracts → interpreter) is
 complete. Remaining work is wiring + content:
 
-1. **tools** — `connectors` (sqlite, grant-enforced, metered) and `ai` (infer
-   behind a Backend interface) are real and bus-registered.
-2. **first-party services** (messenger, state) and the **MTG e2e** — the worked
-   example end-to-end (checker → connector write → event trigger → notifier),
-   wiring interpreter + bus + connectors + ai + triggers together.
-3. **integration glue** — real Docker `Engine`, triggers' cron clock + bus
-   subscription, the SDK contract, the storage detail/admin tables (incl. the
-   connector crossing/mutation fact tables the Meter feeds).
+**M1 substrate acceptance is reached**: the MTG worked example runs end to end
+through the real Go components (`test/e2e/mtg_test.go`). What remains is the
+real-world I/O glue and content:
+
+1. **integration glue** — real Docker `Engine` behind the launcher; triggers'
+   cron clock + the bus subscription that feeds `OnEvent`; a real Codex `ai`
+   backend; a real connector `Meter` writing the crossing/mutation fact tables.
+2. **storage detail/admin tables** — connector crossing/mutation + ai-call detail
+   facts; the service index/manifest admin tables.
+3. **content** — first-party service cfgs (messenger, state), the thin `library`
+   tool, and `cfg.Step` call arguments (`with:`) so cfgs are fully self-driving
+   rather than relying on fact feed-forward.
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving
