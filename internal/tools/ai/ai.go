@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"github.com/adam-riffi/wuxing/internal/kernel/bus"
+	"github.com/adam-riffi/wuxing/internal/kernel/lineage"
 )
 
 // Request is an inference request.
@@ -40,6 +41,7 @@ type Backend interface {
 
 // CallFact is the ai detail fact emitted per call (the cost/window-burn lane).
 type CallFact struct {
+	Stamp     lineage.Stamp
 	Model     string
 	Mode      string
 	TokensIn  int
@@ -108,6 +110,7 @@ func (t *Tool) handleInfer(ctx context.Context, e bus.Envelope) bus.Envelope {
 	// Cost is recorded at incur-time — before output validation, so it is
 	// captured even when a schema-constrained output fails to validate.
 	t.meter.Call(CallFact{
+		Stamp:     e.Stamp,
 		Model:     res.Model,
 		Mode:      "infer",
 		TokensIn:  res.TokensIn,
