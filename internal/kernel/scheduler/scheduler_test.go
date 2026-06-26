@@ -135,6 +135,80 @@ func TestScheduler_FCFSWithinClass(t *testing.T) {
 	}
 }
 
+func TestScheduler_AIJobNeedsBothResources(t *testing.T) {
+	s := New(100, nil, WithAIWindow(10))
+
+	// Fits memory and window.
+	if err := s.Submit(Job{ID: "a", Request: 50, AIRequest: 6}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"a"}) {
+		t.Fatalf("running: got %v want [a]", got)
+	}
+	if s.Window() != 4 {
+		t.Errorf("window: got %d want 4", s.Window())
+	}
+
+	// Memory is free, but the window (4) is too small for AIRequest 6: queued.
+	_ = s.Submit(Job{ID: "b", Request: 10, AIRequest: 6})
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Errorf("queued on window exhaustion: got %v want [b]", got)
+	}
+}
+
+func TestScheduler_NonAIJobIgnoresWindow(t *testing.T) {
+	s := New(100, nil) // no AI window configured (window == 0)
+	if err := s.Submit(Job{ID: "a", Request: 50}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"a"}) {
+		t.Errorf("non-AI job should ignore the window: running %v", got)
+	}
+}
+
+func TestScheduler_RefillAdmitsWaitingAIJob(t *testing.T) {
+	rec := &recorder{}
+	s := New(100, rec.admit, WithAIWindow(10))
+	_ = s.Submit(Job{ID: "a", Request: 10, AIRequest: 10}) // drains window to 0
+	_ = s.Submit(Job{ID: "b", Request: 10, AIRequest: 5})  // queued: no window
+
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Fatalf("queued: got %v want [b]", got)
+	}
+
+	s.RefillWindow(5) // clock refill -> b now fits
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Errorf("running after refill: got %v want [a b]", got)
+	}
+	if !reflect.DeepEqual(rec.ids, []string{"a", "b"}) {
+		t.Errorf("admission order: got %v want [a b]", rec.ids)
+	}
+}
+
+func TestScheduler_WindowNotFreedOnComplete(t *testing.T) {
+	s := New(100, nil, WithAIWindow(10))
+	_ = s.Submit(Job{ID: "a", Request: 10, AIRequest: 7})
+	if s.Window() != 3 {
+		t.Fatalf("window after admit: got %d want 3", s.Window())
+	}
+	s.Complete("a")
+	// Memory returns, the window does not (it refills on a clock).
+	if s.Window() != 3 {
+		t.Errorf("window after complete: got %d want 3 (must not be freed)", s.Window())
+	}
+	if s.Free() != 100 {
+		t.Errorf("memory after complete: got %d want 100", s.Free())
+	}
+}
+
+func TestScheduler_RefillCapsAtWindowCapacity(t *testing.T) {
+	s := New(100, nil, WithAIWindow(10))
+	s.RefillWindow(50) // way over capacity
+	if s.Window() != 10 {
+		t.Errorf("window: got %d want 10 (capped)", s.Window())
+	}
+}
+
 func TestScheduler_Rejects(t *testing.T) {
 	s := New(100, nil)
 	cases := map[string]Job{
