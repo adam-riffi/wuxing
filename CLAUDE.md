@@ -39,14 +39,16 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | triggers | `internal/kernel/triggers` | cron + event rules; sequence propagation (external opens a new sequence, event inherits the cause's) |
 | launcher | `internal/kernel/launcher` | Engine interface + launch logic: provision/sweep scratch, inject env, apply mem limit, track instances (Docker driver deferred) |
 | cfg schema | `internal/contracts/cfg` | service cfg model + YAML parse + Validate against a Vocabulary (derived from docs/vocabulary) |
+| interpreter | `internal/kernel/interpreter` | read cfg → route: Call (validate vs vocab → bus), Run (workflow stepping + branch on emitted fact), Successors (condition eval) |
 | storage | `internal/storage` | pure-Go sqlite open + forward-only embedded migrator (schema_migrations) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
 
-Stubs still `doc.go`-only: `kernel/interpreter`,
-`tools/{library,graph,processors,connectors,ai}`, `contracts/{bus,sdk}`,
-`sdk`, `storage/{dims,artifacts}`.
+The kernel's seven faces are all implemented (bus, lineage, scheduler, sessions,
+triggers, launcher logic, interpreter). Stubs still `doc.go`-only:
+`tools/{library,graph,processors,connectors,ai}`, `contracts/{bus,sdk}`, `sdk`,
+`storage/{dims,artifacts}`.
 
 ## Branch & PR workflow (IMPORTANT)
 
@@ -79,15 +81,15 @@ floor on PRs and dev/main), `release.yml`, `codeql.yml`.
 
 In rough dependency order (kernel faces + the tool vocabulary are done):
 
-1. **interpreter** (`kernel/interpreter`) — parse a cfg, validate each
-   tool.operation against the vocabulary, route the call over the bus, feed the
-   return forward, evaluate successor conditions on the emitted fact.
-2. **first-party services** (messenger, state) and the **MTG e2e**.
+The kernel critical path (vocabulary → cfg grammar → contracts → interpreter) is
+complete. Remaining work is wiring + content:
 
-The cfg schema (`contracts/cfg`) is done; the bus envelope already lives in
-`kernel/bus`; the SDK contract (`contracts/sdk`) is a thin follow-up. The tool
-vocabulary is drafted in `docs/vocabulary/` (ai, connectors, library);
-graph/processors stay minimal/blocked per the design.
+1. **tools** — give `library`/`connectors`/`ai` real handlers registered on the
+   bus (currently `doc.go` stubs); the interpreter already routes to them by name.
+2. **first-party services** (messenger, state) and the **MTG e2e** — the worked
+   example end-to-end (checker → connector write → event trigger → notifier).
+3. **integration glue** — real Docker `Engine`, triggers' cron clock + bus
+   subscription, the SDK contract, the storage detail/admin tables.
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving
