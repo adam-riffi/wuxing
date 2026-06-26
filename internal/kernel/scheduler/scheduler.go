@@ -8,8 +8,12 @@
 // deadlocks. When nothing fits, jobs queue; the queue is the back-pressure valve.
 //
 // This file covers single-resource (memory) admission with priority-class +
-// FCFS ordering and strict head-of-line blocking. Backfill, the AI-quota window,
-// and patience/escalation build on it.
+// FCFS ordering and backfill. When the head does not fit, smaller waiting jobs
+// backfill the free gap the head cannot use; the head is retried first on every
+// change, so it keeps its claim. Backfill here is opportunistic — without
+// job-duration estimates it cannot prove a backfilled job won't delay the head,
+// so it only ever uses memory the head currently cannot. The AI-quota window and
+// patience/escalation build on it.
 package scheduler
 
 import (
@@ -132,19 +136,22 @@ func (s *Scheduler) enqueue(job Job) {
 	s.queue[i] = job
 }
 
-// pump admits jobs from the head of the queue while the head fits. Strict
-// head-of-line: if the head does not fit, admission stops (no skipping yet).
+// pump admits every waiting job that fits, scanning in priority/FCFS order. The
+// head is tried first; a job the head is too large for is skipped so a smaller
+// job behind it can backfill the gap. Because the queue stays ordered and the
+// head is retried on every pump, the head keeps first claim on freed memory.
 func (s *Scheduler) pump() []Job {
 	var admitted []Job
-	for len(s.queue) > 0 {
-		head := s.queue[0]
-		if head.Request > s.free {
-			break
+	for i := 0; i < len(s.queue); {
+		job := s.queue[i]
+		if job.Request > s.free {
+			i++ // head (or this job) does not fit; try to backfill the next
+			continue
 		}
-		s.queue = s.queue[1:]
-		s.free -= head.Request
-		s.running[head.ID] = head
-		admitted = append(admitted, head)
+		s.free -= job.Request
+		s.running[job.ID] = job
+		admitted = append(admitted, job)
+		s.queue = append(s.queue[:i], s.queue[i+1:]...) // queue shifts into i
 	}
 	return admitted
 }
