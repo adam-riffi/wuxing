@@ -7,7 +7,7 @@ import (
 
 func openTemp(t *testing.T) *DB {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "wuxing.db"))
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "wuxing.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestMigrate_RecordsVersion(t *testing.T) {
 func TestOpen_Idempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wuxing.db")
 
-	db1, err := Open(path)
+	db1, err := OpenSQLite(path)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestOpen_Idempotent(t *testing.T) {
 	}
 
 	// Reopening the same file must not re-apply migrations or error.
-	db2, err := Open(path)
+	db2, err := OpenSQLite(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

@@ -11,7 +11,7 @@ import (
 
 func newSpine(t *testing.T) (*Spine, *storage.DB) {
 	t.Helper()
-	db, err := storage.Open(filepath.Join(t.TempDir(), "wuxing.db"))
+	db, err := storage.OpenSQLite(filepath.Join(t.TempDir(), "wuxing.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}

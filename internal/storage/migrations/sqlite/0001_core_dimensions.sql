@@ -1,7 +1,5 @@
 -- Core dimension tables from the data-model spine: small, stable lookups joined
--- to the fact tables. Naming follows ‹database›.‹domain›_‹kind›_‹entity›; here the
--- database (wuxing) is implicit in the file, the domain is the core (wuxing), and
--- the kind is dt (dimension).
+-- to the fact tables.
 
 CREATE TABLE wuxing_dt_outcome (
     outcome_id INTEGER PRIMARY KEY,
@@ -20,8 +18,6 @@ CREATE TABLE wuxing_dt_service (
     version    TEXT NOT NULL DEFAULT ''
 );
 
--- The fixed outcome vocabulary services classify their domain errors into and
--- the kernel stamps onto every event.
 INSERT INTO wuxing_dt_outcome (outcome_id, name) VALUES
     (1, 'success'),
     (2, 'failure'),
