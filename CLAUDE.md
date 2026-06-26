@@ -45,6 +45,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | MTG e2e | `test/e2e/mtg_test.go` | the worked example through the real substrate: trigger → interpreter → connectors write → fact → triggers (sequence inherited) → ai; one sequence_id across the cascade |
 | storage | `internal/storage` | backend-configurable behind a `Dialect` (SQLite embedded **or** Postgres server), DSN-driven; forward-only per-dialect migrator; `?`→`$N` rebind. Postgres execution pending verification (testcontainers/Supabase) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
+| detail facts | `internal/storage/facts` | connector crossing/mutation + ai-call tables (migration 0003, both dialects) + `Detail` access layer keyed by the lineage stamp |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
 
@@ -100,8 +101,12 @@ real-world I/O glue and content:
    real Supabase DSN), wire pgx simple-protocol for the multi-statement
    migrations, port the connector to Postgres, and open the fact store (WAL for
    sqlite) on daemon boot so DBeaver/Tableau can read it live.
-3. **storage detail/admin tables** — connector crossing/mutation + ai-call detail
-   facts; the service index/manifest admin tables.
+3. **wire the detail facts to the tools** — the detail tables + `facts.Detail`
+   access layer are done. Next: extend the `connectors.Crossing/Mutation` and
+   `ai.CallFact` structs with the lineage stamp (populated from the envelope in
+   the handlers), and add a storage-backed `Meter` adapter implementing
+   `connectors.Meter` + `ai.Meter` so the tools' facts persist. Then the
+   service-index/manifest admin tables.
 4. **content** — first-party service cfgs (messenger, state) and the thin
    `library` tool. (Per-step `with:` args are done — cfgs are self-driving: the
    interpreter merges a step's args with the accumulated facts into its payload.)
