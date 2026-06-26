@@ -37,12 +37,13 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | scheduler | `internal/kernel/scheduler` | dual-resource admission (memory + AI window), never-partial, priority+FCFS, backfill, patience (escalate/fail), overclock reserve band |
 | sessions | `internal/kernel/sessions` | running registry of live instances; the drain check (HasRunning) the library's deregister consults |
 | triggers | `internal/kernel/triggers` | cron + event rules; sequence propagation (external opens a new sequence, event inherits the cause's) |
+| launcher | `internal/kernel/launcher` | Engine interface + launch logic: provision/sweep scratch, inject env, apply mem limit, track instances (Docker driver deferred) |
 | storage | `internal/storage` | pure-Go sqlite open + forward-only embedded migrator (schema_migrations) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | daemon | `cmd/wuxing` | boots, loads boot manifest, inits bus, clean shutdown |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
 
-Stubs still `doc.go`-only: `kernel/{interpreter,launcher}`,
+Stubs still `doc.go`-only: `kernel/interpreter`,
 `tools/{library,graph,processors,connectors,ai}`, `contracts/{cfg,bus,sdk}`,
 `sdk`, `storage/{dims,artifacts}`.
 
@@ -75,17 +76,17 @@ floor on PRs and dev/main), `release.yml`, `codeql.yml`.
 
 ## Next tasks
 
-In rough dependency order (scheduler, sessions, and triggers are done):
+In rough dependency order (scheduler, sessions, triggers, and the launcher logic are done):
 
-1. **launcher** (`kernel/launcher`) — Docker SDK: run a service image with its
-   envelope, scratch space, `.env`, bus wiring (integration-tested).
-2. **tool vocabulary** (`docs/vocabulary/ai.md`, `connectors.md`) — the gating
+1. **tool vocabulary** (`docs/vocabulary/ai.md`, `connectors.md`) — the gating
    design work; the cfg grammar is derived from it.
-3. **contracts** (`contracts/{cfg,bus,sdk}`) then the **interpreter**.
+2. **contracts** (`contracts/{cfg,bus,sdk}`) then the **interpreter**.
+3. **first-party services** (messenger, state) and the **MTG e2e**.
 
-Note: triggers' cron *clock* (driving FireExternal on schedule via robfig/cron)
-and the bus subscription that feeds OnEvent are wired at the kernel/launcher
-integration step; the trigger logic + sequence propagation are done and unit-tested.
+Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
+behind the launcher interface; triggers' cron *clock* (robfig/cron driving
+FireExternal) and the bus subscription that feeds `OnEvent`. The logic for all of
+these is done and unit-tested; only the I/O wiring remains.
 
 The worked example to aim for (acceptance): the MTG new-set notifier end-to-end
 (checker → connector write → event trigger → notifier → messenger) observed in
