@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
@@ -125,6 +126,27 @@ func TestInterpreter_HandlerErrorFailsRun(t *testing.T) {
 
 	if _, err := in.Run(context.Background(), mtgService(), sessionStamp()); err == nil {
 		t.Error("expected Run to fail when a step's handler errors")
+	}
+}
+
+func TestInterpreter_StepWithArgsInPayload(t *testing.T) {
+	b := bus.New()
+	var got string
+	_ = b.Register("connectors", func(_ context.Context, e bus.Envelope) bus.Envelope {
+		got = string(e.Payload)
+		return e.Reply(nil)
+	})
+	in := New(b, cfg.DefaultVocabulary(), seqMinter())
+
+	svc := &cfg.Service{
+		Name:     "s",
+		Workflow: []cfg.Step{{ID: "w", Tool: "connectors", Operation: "write", With: map[string]any{"target": "mtg.cards"}}},
+	}
+	if _, err := in.Run(context.Background(), svc, sessionStamp()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"target":"mtg.cards"`) {
+		t.Errorf("step With args not injected into the call payload: %s", got)
 	}
 }
 
