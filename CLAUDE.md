@@ -76,12 +76,14 @@ floor on PRs and dev/main), `release.yml`, `codeql.yml`.
 
 ## Next tasks
 
-In rough dependency order (scheduler, sessions, triggers, and the launcher logic are done):
+In rough dependency order (kernel faces + the tool vocabulary are done):
 
-1. **tool vocabulary** (`docs/vocabulary/ai.md`, `connectors.md`) — the gating
-   design work; the cfg grammar is derived from it.
-2. **contracts** (`contracts/{cfg,bus,sdk}`) then the **interpreter**.
-3. **first-party services** (messenger, state) and the **MTG e2e**.
+1. **contracts** (`contracts/{cfg,bus,sdk}`) — cfg schema (derived from the
+   vocabulary), bus envelope, SDK contract; then the **interpreter**.
+2. **first-party services** (messenger, state) and the **MTG e2e**.
+
+The tool vocabulary catalogs are drafted in `docs/vocabulary/` (ai, connectors,
+library); graph/processors stay minimal/blocked per the design.
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
 behind the launcher interface; triggers' cron *clock* (robfig/cron driving

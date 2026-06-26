@@ -10,9 +10,9 @@ vs schema) · allowlist semantics · resource envelope**.
 
 | Tool | File | Status |
 |---|---|---|
-| ai | `ai.md` | Phase 1 — heavy, derives the grammar |
-| connectors | `connectors.md` | Phase 1 — heaviest, derives the grammar |
-| library | `library.md` | Near-final (registry; low cfg-vocabulary footprint) |
+| ai | `ai.md` | Drafted — infer/autocomplete/agent; derives the grammar |
+| connectors | `connectors.md` | Drafted — read/query/write/upsert; derives the grammar |
+| library | `library.md` | Drafted — register/serve; low cfg-vocabulary footprint |
 | graph | `graph.md` | Blocked on the interpreter ↔ graph boundary (Phase 6) |
 | processors | `processors.md` | Minimal — follows the metadata schema |
 
