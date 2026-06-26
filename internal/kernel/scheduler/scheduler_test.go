@@ -41,28 +41,58 @@ func TestScheduler_QueuesWhenFull(t *testing.T) {
 	}
 }
 
-func TestScheduler_NeverPartialHeadOfLine(t *testing.T) {
+func TestScheduler_NeverPartial(t *testing.T) {
 	s := New(10, nil)
 	_ = s.Submit(Job{ID: "a", Request: 8}) // admitted, free=2
-	_ = s.Submit(Job{ID: "b", Request: 5}) // queued, does not fit
-	_ = s.Submit(Job{ID: "c", Request: 2}) // fits free, but blocked behind b
+	_ = s.Submit(Job{ID: "b", Request: 5}) // does not fit in 2; never partial
 
 	if got := s.Running(); !reflect.DeepEqual(got, []string{"a"}) {
-		t.Errorf("running: got %v want [a] (c must not jump the head)", got)
+		t.Errorf("running: got %v want [a]", got)
 	}
-	if got := s.Queued(); !reflect.DeepEqual(got, []string{"b", "c"}) {
-		t.Errorf("queued: got %v want [b c]", got)
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Errorf("queued: got %v want [b]", got)
+	}
+}
+
+func TestScheduler_BackfillsGapTooSmallForHead(t *testing.T) {
+	s := New(10, nil)
+	_ = s.Submit(Job{ID: "a", Request: 8}) // running, free=2
+	_ = s.Submit(Job{ID: "b", Request: 5}) // head, blocked (5 > 2)
+	_ = s.Submit(Job{ID: "c", Request: 2}) // backfills the gap the head can't use
+
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"a", "c"}) {
+		t.Errorf("running: got %v want [a c] (c should backfill)", got)
+	}
+	if got := s.Queued(); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Errorf("queued: got %v want [b] (head stays queued)", got)
+	}
+}
+
+func TestScheduler_HeadKeepsClaimOnCompletion(t *testing.T) {
+	rec := &recorder{}
+	s := New(10, rec.admit)
+	_ = s.Submit(Job{ID: "a", Request: 8}) // running, free=2
+	_ = s.Submit(Job{ID: "b", Request: 5}) // head, blocked
+	_ = s.Submit(Job{ID: "c", Request: 2}) // backfilled, free=0
+
+	s.Complete("a") // frees 8 -> the head b is tried first and admitted
+
+	if got := s.Running(); !reflect.DeepEqual(got, []string{"b", "c"}) {
+		t.Errorf("running: got %v want [b c]", got)
+	}
+	if !reflect.DeepEqual(rec.ids, []string{"a", "c", "b"}) {
+		t.Errorf("admission order: got %v want [a c b]", rec.ids)
 	}
 }
 
 func TestScheduler_CompleteAdmitsQueued(t *testing.T) {
 	rec := &recorder{}
 	s := New(10, rec.admit)
-	_ = s.Submit(Job{ID: "a", Request: 8})
-	_ = s.Submit(Job{ID: "b", Request: 5})
-	_ = s.Submit(Job{ID: "c", Request: 2})
+	_ = s.Submit(Job{ID: "a", Request: 10}) // fills capacity, free=0
+	_ = s.Submit(Job{ID: "b", Request: 5})  // queued
+	_ = s.Submit(Job{ID: "c", Request: 2})  // queued (nothing to backfill into)
 
-	s.Complete("a") // frees 8 -> b (5) then c (2) admit
+	s.Complete("a") // frees 10 -> b (5) then c (2) admit
 
 	if got := s.Running(); !reflect.DeepEqual(got, []string{"b", "c"}) {
 		t.Errorf("running: got %v want [b c]", got)
