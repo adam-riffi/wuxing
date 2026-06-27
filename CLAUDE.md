@@ -47,6 +47,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | storage | `internal/storage` | backend-configurable behind a `Dialect` (SQLite embedded **or** Postgres server), DSN-driven; forward-only per-dialect migrator; `?`→`$N` rebind. Postgres execution pending verification (testcontainers/Supabase) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
 | detail facts | `internal/storage/facts` | connector crossing/mutation + ai-call tables (migration 0003, both dialects) + `Detail` access layer keyed by the lineage stamp |
+| admin index | `internal/storage/admin.go` | `wuxing_admin_service` table (migration 0004, both dialects) + Record/Get/List/Remove — declared service-index state (hard-saved cfg JSON) |
 | metering | `internal/metering` | `StoreMeter` implements connectors.Meter + ai.Meter; tool facts persist to the detail tables, stamped from the envelope lineage |
 | daemon | `cmd/wuxing` | boots, loads manifest, opens the fact store (`--store`, WAL), assembles the kernel via `kernel.Assemble`, logs readiness, clean shutdown |
 | kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
@@ -108,12 +109,20 @@ real-world I/O glue and content:
 3. **the run loop is driving cascades** — `Kernel.Run` + the `Runner` (onFire →
    Submit → onAdmit → Run → fire successors) run an admission-gated cascade
    in-process under one sequence_id; `Kernel.Register` wires a service's triggers.
-   Remaining run-loop polish (sqlite-verifiable): close the sequence when a
-   cascade ends; register tools in the *daemon* (with stub/configured backends)
-   so a cfg-only service runs in the live `cmd/wuxing`; admin tables.
-   **Most of what's left needs the user's infra** (see below): the real Docker
-   engine for container-script services, a real Codex backend for `ai`, and
-   Postgres execution verification.
+   Sequence-closing and the admin service-index table are done. **The
+   in-process system is complete and operational; the SQLite-verifiable work is
+   exhausted.** The remaining items all need the user's infra:
+   - **real Docker `Engine`** behind the launcher → run container-script services
+     (start Docker Desktop);
+   - **real Codex backend** for `ai` → real inference (Codex CLI + auth, or an
+     OpenAI key in `.env`);
+   - **Postgres execution verification** → a Supabase DSN in `.env` or Docker for
+     testcontainers, plus pgx simple-protocol for the plpgsql migrations.
+
+   Small follow-ups that pair with the above (not standalone-valuable yet): wire
+   `library`/`Kernel.Register` to persist+load through the admin index; register
+   the tools in the daemon (`cmd/wuxing`) with real backends so a service runs in
+   the live daemon, not just the kernel test.
 4. **admin tables** — the service-index/manifest admin tables.
 5. **content** — first-party service cfgs (messenger, state). (Per-step `with:`
    args are done — cfgs are self-driving: the interpreter merges a step's args
