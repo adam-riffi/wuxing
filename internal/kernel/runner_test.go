@@ -8,9 +8,18 @@ import (
 
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/kernel/bus"
+	"github.com/adam-riffi/wuxing/internal/kernel/lineage"
 	"github.com/adam-riffi/wuxing/internal/kernel/triggers"
 	"github.com/adam-riffi/wuxing/internal/storage"
 )
+
+// directRun builds a triggers.Run without going through FireExternal, so
+// Kernel.Run can be exercised in isolation (FireExternal now auto-runs via the
+// scheduler wiring).
+func (k *Kernel) directRun(service string) triggers.Run {
+	stamp := lineage.NewSequence(k.Minter.SequenceID()).WithRun(k.Minter.RunID(), 0)
+	return triggers.Run{Service: service, Kind: triggers.KindCron, Stamp: stamp}
+}
 
 func testKernel(t *testing.T) *Kernel {
 	t.Helper()
@@ -44,8 +53,8 @@ func TestKernel_Run_WritesSpineAndExecutesWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// An external (cron) trigger opens a new sequence and fires the run.
-	r := k.Triggers.FireExternal("mtg", triggers.KindCron)
+	// A run built directly (FireExternal would auto-run via the scheduler).
+	r := k.directRun("mtg")
 
 	fact, succ, err := k.Run(ctx, r)
 	if err != nil {
@@ -87,9 +96,69 @@ func TestKernel_Run_WritesSpineAndExecutesWorkflow(t *testing.T) {
 	}
 }
 
+func TestKernel_Cascade_OneSequenceAcrossRuns(t *testing.T) {
+	k := testKernel(t)
+
+	var aiCalls int
+	_ = k.Bus.Register("ai", func(_ context.Context, e bus.Envelope) bus.Envelope {
+		aiCalls++
+		return e.Reply(json.RawMessage(`{"new_set":true}`))
+	})
+
+	notifier := &cfg.Service{
+		Name:     "notifier",
+		Envelope: cfg.Envelope{Request: 1},
+		Workflow: []cfg.Step{{ID: "compose", Tool: "ai", Operation: "infer"}},
+	}
+	mtg := &cfg.Service{
+		Name:       "mtg",
+		Envelope:   cfg.Envelope{Request: 1},
+		Workflow:   []cfg.Step{{ID: "check", Tool: "ai", Operation: "infer"}},
+		Successors: []cfg.Successor{{Service: "notifier", Topic: "mtg-db updated", When: "new_set == true"}},
+	}
+	if err := k.Register(notifier); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Register(mtg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Firing mtg's external trigger drives the whole cascade synchronously
+	// (onFire -> Submit -> onAdmit -> Run -> fire successor -> notifier).
+	r := k.Triggers.FireExternal("mtg", triggers.KindCron)
+	seq := string(r.Stamp.Sequence)
+
+	if aiCalls != 2 {
+		t.Errorf("expected mtg + notifier to each call ai once, got %d", aiCalls)
+	}
+
+	// Both runs landed in the spine under ONE sequence, ordered 0 then 1.
+	if n := spineCount(t, k, "wuxing_ft_sequence", seq); n != 1 {
+		t.Errorf("sequences: got %d want 1", n)
+	}
+	if n := spineCount(t, k, "wuxing_ft_run", seq); n != 2 {
+		t.Fatalf("runs under the sequence: got %d want 2", n)
+	}
+
+	rows, err := k.Store.Query(`SELECT sequence_order FROM wuxing_ft_run WHERE sequence_id = ? ORDER BY sequence_order`, seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var orders []int
+	for rows.Next() {
+		var o int
+		_ = rows.Scan(&o)
+		orders = append(orders, o)
+	}
+	if len(orders) != 2 || orders[0] != 0 || orders[1] != 1 {
+		t.Errorf("sequence_order: got %v want [0 1]", orders)
+	}
+}
+
 func TestKernel_Run_UnknownService(t *testing.T) {
 	k := testKernel(t)
-	r := k.Triggers.FireExternal("ghost", triggers.KindCron)
+	r := k.directRun("ghost")
 	if _, _, err := k.Run(context.Background(), r); err == nil {
 		t.Error("running an unregistered service should error")
 	}

@@ -3,13 +3,78 @@ package kernel
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/kernel/interpreter"
+	"github.com/adam-riffi/wuxing/internal/kernel/scheduler"
 	"github.com/adam-riffi/wuxing/internal/kernel/sessions"
 	"github.com/adam-riffi/wuxing/internal/kernel/triggers"
 	"github.com/adam-riffi/wuxing/internal/storage/facts"
 )
+
+// Runner drives the kernel: it turns fired triggers into admission-gated runs and
+// propagates the successor cascade. Triggers' onFire submits a job; the
+// scheduler's onAdmit executes the run once admitted, frees the job, then fires
+// the run's successors (inheriting the sequence) so the cascade self-propagates.
+type Runner struct {
+	k *Kernel
+
+	mu      sync.Mutex
+	pending map[string]triggers.Run // scheduler job id -> the run to execute
+}
+
+func newRunner() *Runner {
+	return &Runner{pending: make(map[string]triggers.Run)}
+}
+
+// onFire is the triggers callback: submit the fired run to the scheduler, keyed
+// by its run id, with the memory request from the service's cfg envelope.
+func (rn *Runner) onFire(r triggers.Run) {
+	job := scheduler.Job{ID: string(r.Stamp.Run), Request: rn.request(r.Service)}
+	rn.mu.Lock()
+	rn.pending[job.ID] = r
+	rn.mu.Unlock()
+	_ = rn.k.Scheduler.Submit(job)
+}
+
+// onAdmit is the scheduler callback: execute the admitted run, free its
+// resources, then fire its successors so the cascade continues.
+func (rn *Runner) onAdmit(job scheduler.Job) {
+	rn.mu.Lock()
+	r, ok := rn.pending[job.ID]
+	delete(rn.pending, job.ID)
+	rn.mu.Unlock()
+	if !ok {
+		return
+	}
+
+	_, succ, err := rn.k.Run(context.Background(), r)
+	rn.k.Scheduler.Complete(job.ID)
+	if err != nil {
+		return // the failure is recorded in the spine; the cascade stops here
+	}
+
+	fired := make(map[string]bool, len(succ))
+	for _, s := range succ {
+		if s.Topic == "" || fired[s.Topic] {
+			continue
+		}
+		fired[s.Topic] = true
+		// Emit the successor's topic, inheriting this run's sequence; the
+		// registered successor services fire via onFire.
+		rn.k.Triggers.OnEvent(s.Topic, r.Stamp)
+	}
+}
+
+// request returns the memory request for a service from its cfg envelope, with a
+// minimal floor so a service without a declared request can still be admitted.
+func (rn *Runner) request(service string) int64 {
+	if svc, err := rn.k.Library.GetDefinition(service); err == nil && svc.Envelope.Request > 0 {
+		return svc.Envelope.Request
+	}
+	return 1
+}
 
 // Run executes one triggered service run end to end (in-process, cfg-only path):
 // it looks up the service, opens the spine (sequence/run/session), drives the

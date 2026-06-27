@@ -50,7 +50,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | metering | `internal/metering` | `StoreMeter` implements connectors.Meter + ai.Meter; tool facts persist to the detail tables, stamped from the envelope lineage |
 | daemon | `cmd/wuxing` | boots, loads manifest, opens the fact store (`--store`, WAL), assembles the kernel via `kernel.Assemble`, logs readiness, clean shutdown |
 | kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
-| run loop | `internal/kernel/runner.go` | `Kernel.Run(triggers.Run)` opens the spine (seq/run/session), drives the workflow via the interpreter, closes the run, returns fired successors (in-process, cfg-only path) |
+| run loop | `internal/kernel/runner.go` | `Kernel.Run` (spine + interpreter) + a `Runner` wiring onFire→scheduler.Submit and onAdmit→Run→fire successors. A cron trigger drives a full cascade (mtg→notifier), admission-gated, under one sequence_id. `Kernel.Register` wires a service's triggers |
 | cli | `cmd/wxg` | cobra command tree (library subcommands are stubs) |
 
 The kernel's seven faces are all implemented (bus, lineage, scheduler, sessions,
@@ -105,14 +105,15 @@ real-world I/O glue and content:
    real Supabase DSN), wire pgx simple-protocol for the multi-statement
    migrations, port the connector to Postgres, and open the fact store (WAL for
    sqlite) on daemon boot so DBeaver/Tableau can read it live.
-3. **drive the run loop** — `Kernel.Run(triggers.Run)` (synchronous run
-   execution + spine recording) is done. Next: the async/cascade wiring — make
-   `triggers.onFire` submit a `scheduler.Job` and `scheduler.onAdmit` call
-   `Kernel.Run` (admission-gated), then fire the returned successors via
-   `triggers.OnEvent` so a cascade flows under one sequence and closes the
-   sequence when it ends. Register the connectors+ai tools (needs their
-   backends/config). The container-execution path (vs in-process cfg-only) needs
-   the real Docker engine.
+3. **the run loop is driving cascades** — `Kernel.Run` + the `Runner` (onFire →
+   Submit → onAdmit → Run → fire successors) run an admission-gated cascade
+   in-process under one sequence_id; `Kernel.Register` wires a service's triggers.
+   Remaining run-loop polish (sqlite-verifiable): close the sequence when a
+   cascade ends; register tools in the *daemon* (with stub/configured backends)
+   so a cfg-only service runs in the live `cmd/wuxing`; admin tables.
+   **Most of what's left needs the user's infra** (see below): the real Docker
+   engine for container-script services, a real Codex backend for `ai`, and
+   Postgres execution verification.
 4. **admin tables** — the service-index/manifest admin tables.
 5. **content** — first-party service cfgs (messenger, state). (Per-step `with:`
    args are done — cfgs are self-driving: the interpreter merges a step's args

@@ -28,6 +28,7 @@ type Kernel struct {
 	Interpreter *interpreter.Interpreter
 	Library     *library.Catalog
 	Meter       *metering.StoreMeter
+	Runner      *Runner
 }
 
 // Assemble constructs the kernel faces over an open fact store. memoryCapacity is
@@ -38,17 +39,48 @@ type Kernel struct {
 func Assemble(store *storage.DB, memoryCapacity int64) *Kernel {
 	minter := lineage.NewMinter()
 	b := bus.New()
-	return &Kernel{
+
+	// The runner's callbacks drive the scheduler and triggers, but it needs the
+	// assembled kernel; create it first and back-fill k after. Its methods are
+	// only invoked at runtime (after Assemble returns), so k is set by then.
+	rn := newRunner()
+	k := &Kernel{
 		Store:       store,
 		Bus:         b,
 		Minter:      minter,
-		Scheduler:   scheduler.New(memoryCapacity, nil),
+		Scheduler:   scheduler.New(memoryCapacity, rn.onAdmit),
 		Sessions:    sessions.New(),
-		Triggers:    triggers.New(minter, nil),
+		Triggers:    triggers.New(minter, rn.onFire),
 		Interpreter: interpreter.New(b, cfg.DefaultVocabulary(), minter),
 		Library:     library.New(),
 		Meter:       metering.NewStoreMeter(store),
+		Runner:      rn,
 	}
+	rn.k = k
+	return k
+}
+
+// Register adds a service to the catalog and wires its declarations into the
+// triggers face: each successor becomes an event rule, and each external trigger
+// (cron/event) is registered so the service starts when it fires.
+func (k *Kernel) Register(svc *cfg.Service) error {
+	if err := k.Library.Register(svc); err != nil {
+		return err
+	}
+	for _, s := range svc.Successors {
+		if s.Topic != "" {
+			k.Triggers.RegisterEvent(s.Service, s.Topic)
+		}
+	}
+	for _, t := range svc.Triggers {
+		switch t.Kind {
+		case "cron":
+			k.Triggers.RegisterCron(svc.Name, t.Spec)
+		case "event":
+			k.Triggers.RegisterEvent(svc.Name, t.Spec)
+		}
+	}
+	return nil
 }
 
 // Close releases the kernel's resources: it closes the bus and the fact store.
