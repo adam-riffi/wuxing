@@ -1,131 +1,67 @@
-# Quickstart — drive an agent CLI from wuxing
+# Quickstart — wuxing's AI (auto-detected agent CLIs)
 
-wuxing's `ai` tool has two modes:
+wuxing's `ai` tool runs model work by driving an **agent CLI** that wuxing
+**detects on your system** — like Hermes / Open Design auto-detecting agents. No
+manual connection: install a supported CLI, and `wxg infer` just uses it.
 
-- **`infer`** — one-shot completion (prompt in, result out).
-- **`agent`** — hand a *brief* to a real agent CLI that **drives itself** (plans,
-  uses its own tools, writes files), and capture what it produces.
+Two modes:
 
-Agent mode is how you wire in [Hermes Agent](https://github.com/nousresearch/hermes-agent),
-[Open Design](https://github.com/nexu-io/open-design), Codex, Claude Code, or any
-other agent CLI. wuxing doesn't reimplement the agent — it **runs the CLI
-headlessly in a sandbox and collects the artifact**, recording an `ai` fact
-(model, tokens, cost, turns) like any other call.
+- **chat** (`infer`) — one prompt in, an answer out.
+- **agent** — hand a *brief* to a CLI that **drives itself** (plans, uses its own
+  tools, writes files) in an isolated scratch dir; wuxing captures the artifact.
 
-## How it works
+## 1. Install a supported agent CLI
 
-For each agent call wuxing:
+wuxing auto-detects these on your PATH, in this preference order:
 
-1. creates an **isolated scratch directory** (the agent's workdir);
-2. **delivers the brief** — via `stdin` (default), a positional `arg`, or a
-   `file` in the scratch dir;
-3. runs your `WUXING_AI_AGENT_COMMAND` there, **inheriting your shell
-   environment** (so the CLI's own API key flows through), bounded by a
-   **wall-clock timeout**;
-4. **captures the artifact** — from `stdout` (default) or a named output file;
-5. optionally reads a **usage sidecar** (`{tokens_in,tokens_out,cost,turns}`) and
-   records the `ai` fact.
-
-That's the whole contract. The CLI is allow-listed (one binary), sandboxed (one
-scratch dir), and bounded (one timeout) — it "uses itself" inside those rails.
-
-## 1. Install an agent CLI
-
-Pick one and confirm it runs on your PATH. For example:
-
-```bash
-# Hermes Agent (Nous Research) — 300+ models via OpenRouter
-#   see https://github.com/nousresearch/hermes-agent
-hermes setup           # configure provider + key
-hermes --version
-
-# or Codex
-codex --version
-
-# or Open Design (spawns coding-agent CLIs to emit artifacts)
-#   see https://github.com/nexu-io/open-design
-od --version
-```
-
-> Each CLI has its own auth. Set its key in your shell (or `.env`) — wuxing passes
-> your environment straight through to the child process, so whatever key the CLI
-> already reads will work. For Hermes via OpenRouter that's `OPENROUTER_API_KEY`.
-
-## 2. Configure wuxing
-
-Set these in your shell or `.env` (see `.env.example`). Only `COMMAND` is
-required:
-
-| Variable | Meaning | Default |
+| Agent | Binary | Notes |
 |---|---|---|
-| `WUXING_AI_AGENT_COMMAND` | the binary to run | — (required) |
-| `WUXING_AI_AGENT_ARGS` | extra args, space-split; `{{brief}}` `{{model}}` `{{workdir}}` `{{prompt_file}}` `{{output_file}}` expand | — |
-| `WUXING_AI_AGENT_PROMPT_VIA` | `stdin` \| `arg` \| `file` | `stdin` |
-| `WUXING_AI_AGENT_OUTPUT_VIA` | `stdout` \| `file` | `stdout` |
-| `WUXING_AI_AGENT_OUTPUT_FILE` | filename in the scratch dir when `OUTPUT_VIA=file` | — |
-| `WUXING_AI_AGENT_USAGE_FILE` | optional JSON usage sidecar | — |
-| `WUXING_AI_AGENT_MODEL` | model label recorded on the fact | — |
-| `WUXING_AI_AGENT_TIMEOUT_SECONDS` | per-session wall-clock bound | `300` |
+| Codex | `codex` | default invocation `codex exec "<prompt>"` |
+| Claude Code | `claude` | `claude -p "<prompt>"` (print mode) |
+| Gemini CLI | `gemini` | `gemini -p "<prompt>"` |
+| Hermes Agent | `hermes` | prompt piped on stdin |
+| Open Design | `od` | prompt piped on stdin |
 
-### Starting points per CLI
+Install any one (with its own auth — wuxing passes your environment straight
+through, so whatever key the CLI already reads will work).
 
-These are **templates** — confirm the exact headless flags for *your* installed
-version, then adjust.
-
-**Hermes Agent** (prompt on stdin, answer on stdout):
+## 2. Check what wuxing found
 
 ```bash
-export WUXING_AI_AGENT_COMMAND=hermes
-export WUXING_AI_AGENT_PROMPT_VIA=stdin
-export WUXING_AI_AGENT_OUTPUT_VIA=stdout
-export OPENROUTER_API_KEY=sk-or-...
+go build -o wxg ./cmd/wxg
+./wxg infer detect
 ```
 
-**Codex** (brief as an argument):
-
-```bash
-export WUXING_AI_AGENT_COMMAND=codex
-export WUXING_AI_AGENT_ARGS="exec"     # non-interactive subcommand
-export WUXING_AI_AGENT_PROMPT_VIA=arg  # brief appended after the args
-export OPENAI_API_KEY=sk-...
+```
+Detected agent CLIs (default first):
+* codex        /Users/you/.npm/bin/codex
+  claude       /Users/you/.local/bin/claude
+  hermes       /Users/you/.../hermes
 ```
 
-**Open Design** (agent writes an artifact file into the workdir):
+The `*` is what `wxg infer` uses by default.
+
+## 3. Talk to wuxing
 
 ```bash
-export WUXING_AI_AGENT_COMMAND=od
-export WUXING_AI_AGENT_ARGS="generate --out {{output_file}}"
-export WUXING_AI_AGENT_OUTPUT_VIA=file
-export WUXING_AI_AGENT_OUTPUT_FILE=artifact.html
+./wxg infer chat "who was gorbachev"            # uses the detected default
+./wxg infer chat "who was gorbachev" claude     # force a specific agent
+./wxg infer agent "Draft a Discord post about today's new Magic set."
 ```
 
-> If your CLI is interactive-only (a TUI) or needs an unusual invocation, wrap it
-> in a tiny shell script that reads the brief and prints the result, and point
-> `WUXING_AI_AGENT_COMMAND` at the script. The placeholders make most CLIs work
-> without a wrapper.
+The answer prints to **stdout**; the agent used is noted on **stderr**
+(`[wuxing: via codex]`). Flags: `--model <label>`, `--timeout <seconds>`.
 
-## 3. Smoke-test it
+The daemon has the same one-shot smoke command:
 
 ```bash
-go build -o wuxing ./cmd/wuxing      # or: go run ./cmd/wuxing agent ...
+go build -o wuxing ./cmd/wuxing
 ./wuxing agent --brief "Write a haiku about a new Magic set."
 ```
 
-The artifact prints to **stdout**; a one-line usage summary prints to **stderr**:
-
-```
-A set descends bright— / cards shuffle into the night / spoilers light the dawn
-[wuxing agent: model=hermes turns=1 tokens=0/0 cost=0.0000 0ms]
-```
-
-`--model` and `--timeout <seconds>` override the spec defaults.
-
-If you see `WUXING_AI_AGENT_COMMAND is not set`, your env isn't exported into the
-shell running `wuxing`.
-
 ## 4. Use it from a service
 
-In a service cfg, call the `ai` tool's `agent` operation and pass a `brief`:
+In a service cfg, call the `ai` tool's `agent` (or `infer`) operation:
 
 ```yaml
 workflow:
@@ -134,23 +70,40 @@ workflow:
     operation: agent
     with:
       brief: "Summarize today's new Magic set for a Discord post."
-      # model: hermes-4          # optional
-      # timeout_seconds: 600     # optional
+      # model: o4            # optional
+      # timeout_seconds: 600 # optional
 ```
 
 The step's result is the captured artifact (JSON if the agent emits JSON,
-otherwise a JSON string). Each call records an `ai` fact with `mode = "agent"`,
-so agent runs show up in the spine and cost lanes next to `infer` calls.
+otherwise a JSON string). Each call records an `ai` fact (`mode = "agent"`), so
+agent runs show up in the spine and cost lanes next to `infer` calls.
+
+## Overriding detection (optional)
+
+You only need this if a CLI's flags differ from wuxing's defaults, or you want a
+custom command/wrapper. Set `WUXING_AI_AGENT_*` (see `.env.example`):
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `WUXING_AI_AGENT_COMMAND` | the binary to run (takes precedence over detection) | — |
+| `WUXING_AI_AGENT_ARGS` | extra args, space-split; `{{brief}}` `{{model}}` `{{workdir}}` `{{output_file}}` expand | — |
+| `WUXING_AI_AGENT_PROMPT_VIA` | `stdin` \| `arg` \| `file` | `stdin` |
+| `WUXING_AI_AGENT_OUTPUT_VIA` | `stdout` \| `file` | `stdout` |
+| `WUXING_AI_AGENT_OUTPUT_FILE` | filename in the scratch dir when `OUTPUT_VIA=file` | — |
+| `WUXING_AI_AGENT_USAGE_FILE` | optional JSON usage sidecar | — |
+
+When `WUXING_AI_AGENT_COMMAND` is set, `wxg infer chat "…"` (no backend named)
+uses it instead of auto-detecting.
 
 ## Notes & limits
 
-- **Usage/cost.** Most CLIs don't print tokens/cost to stdout. To capture them,
-  have your CLI (or wrapper) write a `WUXING_AI_AGENT_USAGE_FILE` JSON sidecar in
-  the workdir: `{"tokens_in":1200,"tokens_out":340,"cost":0.012,"turns":5}`.
-  Without it the fact still records the call (`turns=1`, zero cost).
-- **Args with spaces.** `WUXING_AI_AGENT_ARGS` is split on spaces. For arguments
-  that contain spaces, use a wrapper script.
+- **Detection finds the binary; the invocation is a sensible default.** If your
+  CLI's headless flags differ from the table above, override with
+  `WUXING_AI_AGENT_*` or wrap the CLI in a small script on your PATH.
+- **Usage/cost.** Most CLIs don't print tokens/cost. To capture them, have your
+  CLI (or wrapper) write a `WUXING_AI_AGENT_USAGE_FILE` JSON sidecar in the
+  workdir: `{"tokens_in":1200,"tokens_out":340,"cost":0.012,"turns":5}`. Without
+  it the fact still records the call (`turns=1`, zero cost).
 - **Sandboxing.** The scratch dir is a fresh temp dir per call, removed after.
-  The agent can still touch the rest of the system if it wants to — wuxing bounds
-  *what it runs and for how long*, not what the agent's own tools can reach. Run
-  agents you trust, or run the whole daemon in a container.
+  wuxing bounds *what it runs and for how long*, not what the agent's own tools
+  can reach — run agents you trust, or run the daemon in a container.

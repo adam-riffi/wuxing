@@ -106,14 +106,15 @@ func run(ctx context.Context, manifestPath, storePath string, log zerolog.Logger
 	return nil
 }
 
-// runAgentCmd is the `wuxing agent` subcommand: drive the configured agent CLI
-// (WUXING_AI_AGENT_* env) once with a brief and print the artifact to stdout.
-// This is the smoke test for an agent integration — it exercises the real CLI
-// (Hermes, Codex, Open Design, …) without needing the rest of the kernel.
+// runAgentCmd is the `wuxing agent` subcommand: run a brief through an agent CLI
+// that wuxing auto-detects on PATH (override with a name via WUXING_AI_AGENT_*),
+// printing the artifact to stdout. The smoke test for an agent integration — it
+// exercises the real CLI (Codex, Claude, Hermes, …) without the rest of the kernel.
 func runAgentCmd(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	brief := fs.String("brief", "", "the task/brief to hand the agent (required)")
 	model := fs.String("model", "", "model label to pass through (optional)")
+	backend := fs.String("backend", "", "force an agent by name (default: auto-detect)")
 	timeout := fs.Int("timeout", 0, "wall-clock timeout in seconds (0 = spec default)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -122,16 +123,16 @@ func runAgentCmd(args []string) error {
 		return fmt.Errorf("--brief is required")
 	}
 
-	spec, err := ai.AgentSpecFromEnv()
+	agent, label, err := ai.ResolveAgent(*backend)
 	if err != nil {
-		return fmt.Errorf("%w\nset WUXING_AI_AGENT_COMMAND (e.g. \"hermes\") — see docs/quickstart-ai-agent.md", err)
+		return err
 	}
 
 	req := ai.AgentRequest{Brief: *brief, Model: *model}
 	if *timeout > 0 {
 		req.Timeout = time.Duration(*timeout) * time.Second
 	}
-	res, err := ai.NewCLIAgent(spec).RunAgent(context.Background(), req)
+	res, err := agent.RunAgent(context.Background(), req)
 	if err != nil {
 		return err
 	}
@@ -139,8 +140,8 @@ func runAgentCmd(args []string) error {
 	if _, err := os.Stdout.Write(res.Output); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "\n[wuxing agent: model=%s turns=%d tokens=%d/%d cost=%.4f %dms]\n",
-		res.Model, res.TurnCount, res.TokensIn, res.TokensOut, res.Cost, res.TTFTMs)
+	fmt.Fprintf(os.Stderr, "\n[wuxing agent: via=%s model=%s turns=%d tokens=%d/%d cost=%.4f %dms]\n",
+		label, res.Model, res.TurnCount, res.TokensIn, res.TokensOut, res.Cost, res.TTFTMs)
 	return nil
 }
 
