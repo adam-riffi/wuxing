@@ -123,3 +123,35 @@ these is done and unit-tested; only the I/O wiring remains.
 The worked example to aim for (acceptance): the MTG new-set notifier end-to-end
 (checker → connector write → event trigger → notifier → messenger) observed in
 the tracking tables under one sequence_id.
+
+## Handoff — resuming this project (read this if you're picking up cold)
+
+**What's done:** the full kernel (seven faces) + the four tools (connectors, ai,
+library real; graph/processors stubs) + the storage spine, detail facts, and
+metering + the cfg interpreter + the MTG e2e (in `test/e2e`). The fact store is
+backend-configurable (SQLite default / Postgres via DSN). The daemon
+(`cmd/wuxing`) boots, opens the WAL fact store, and **assembles a live kernel**
+(`kernel.Assemble`), then idles. Everything is unit/substrate-tested; **M1
+(the worked example through the real Go components) is reached**.
+
+**Where to pick up:** Next tasks item 3 — **the run loop**. The daemon assembles
+the kernel but doesn't drive it yet. Wire `triggers.onFire` → open a spine
+sequence/run/session (`facts.Spine`) → run the service's workflow via the
+`interpreter` → close the run; wire `scheduler.onAdmit` → launch; register the
+tools. The in-process (cfg-only) path is sqlite-verifiable now; the container
+path needs the real Docker engine (below).
+
+**Parked — needs the user's infrastructure (do NOT blind-debug via CI):**
+- Postgres *execution* verification — needs Docker (testcontainers) running or a
+  live Supabase DSN in `.env`. Also wire pgx simple-protocol for the
+  multi-statement/plpgsql migrations when verifying.
+- Real Docker `Engine` behind the launcher (run actual containers).
+- Real Codex backend for the `ai` tool (real inference; needs Codex CLI + auth).
+When you hit these, surface them to the user rather than guessing.
+
+**How work flows (the loop convention):** build each feature on a pushed
+`feat/*` branch → PR into `dev-claude` → CI green → self-merge, **keep the
+branch**. Never delete branches, never push to `dev`/`main` directly. Open
+`dev-claude → dev` promotion PRs for the user to validate; the user merges all
+`dev`/`main` PRs. Commits are atomic + green; conventional types. Keep THIS file
+current each iteration (status table + Next tasks) — it is the primary handoff.
