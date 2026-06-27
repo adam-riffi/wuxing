@@ -28,9 +28,14 @@ through, so whatever key the CLI already reads will work).
 ## 2. Check what wuxing found
 
 ```bash
-go build -o wxg ./cmd/wxg
-./wxg infer detect
+go build ./cmd/wxg      # -> wxg (Linux/macOS) or wxg.exe (Windows)
+./wxg infer detect      # Windows: .\wxg.exe infer detect
 ```
+
+> **Windows:** build with `go build ./cmd/wxg` (not `-o wxg`) so you get `wxg.exe`.
+> An extensionless `wxg` isn't runnable — Windows shows an "open with which app?"
+> picker instead. The examples below use `./wxg`; on Windows that's `.\wxg.exe`
+> (or just `go run ./cmd/wxg …`).
 
 ```
 Detected agent CLIs (default first):
@@ -55,7 +60,7 @@ The answer prints to **stdout**; the agent used is noted on **stderr**
 The daemon has the same one-shot smoke command:
 
 ```bash
-go build -o wuxing ./cmd/wuxing
+go build ./cmd/wuxing   # -> wuxing or wuxing.exe
 ./wuxing agent --brief "Write a haiku about a new Magic set."
 ```
 

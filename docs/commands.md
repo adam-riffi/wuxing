@@ -5,12 +5,21 @@ What you can run today, and what each thing does. wuxing ships **two binaries**:
 - **`wuxing`** — the kernel **daemon** (the long-running control plane).
 - **`wxg`** — the operator **CLI** (the `kubectl` of wuxing; how you talk to it).
 
-Build both:
+Build both (let `go build` name the output so you get the right extension per OS —
+`wxg` on Linux/macOS, `wxg.exe` on Windows):
 
 ```bash
-go build -o wuxing ./cmd/wuxing
-go build -o wxg    ./cmd/wxg
+go build ./cmd/wuxing    # -> wuxing  or  wuxing.exe
+go build ./cmd/wxg       # -> wxg     or  wxg.exe
 ```
+
+Then run from the build dir: `./wxg …` on Linux/macOS, `.\wxg.exe …` on Windows
+(or skip the build entirely with `go run ./cmd/wxg …`).
+
+> **Windows note:** don't build with `-o wxg` — that writes an *extensionless*
+> file, and Windows won't recognize it as a program (you'll get the "How do you
+> want to open this file?" app picker). Use the commands above so the binary is
+> named `wxg.exe`.
 
 > Status legend: ✅ works · 🟡 partial · 🚧 stub (prints "not implemented")
 
