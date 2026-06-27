@@ -7,6 +7,7 @@ import (
 
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/kernel/interpreter"
+	"github.com/adam-riffi/wuxing/internal/kernel/lineage"
 	"github.com/adam-riffi/wuxing/internal/kernel/scheduler"
 	"github.com/adam-riffi/wuxing/internal/kernel/sessions"
 	"github.com/adam-riffi/wuxing/internal/kernel/triggers"
@@ -17,29 +18,49 @@ import (
 // propagates the successor cascade. Triggers' onFire submits a job; the
 // scheduler's onAdmit executes the run once admitted, frees the job, then fires
 // the run's successors (inheriting the sequence) so the cascade self-propagates.
+// It tracks in-flight runs per sequence and closes the sequence when the last
+// one completes — the chain head is opened by the external trigger and closed
+// here when the cascade ends.
 type Runner struct {
 	k *Kernel
 
-	mu      sync.Mutex
-	pending map[string]triggers.Run // scheduler job id -> the run to execute
+	mu       sync.Mutex
+	pending  map[string]triggers.Run          // scheduler job id -> the run to execute
+	inflight map[lineage.SequenceID]*seqState // open sequence -> in-flight bookkeeping
+}
+
+type seqState struct {
+	inflight int
+	failed   bool
 }
 
 func newRunner() *Runner {
-	return &Runner{pending: make(map[string]triggers.Run)}
+	return &Runner{
+		pending:  make(map[string]triggers.Run),
+		inflight: make(map[lineage.SequenceID]*seqState),
+	}
 }
 
 // onFire is the triggers callback: submit the fired run to the scheduler, keyed
-// by its run id, with the memory request from the service's cfg envelope.
+// by its run id, with the memory request from the service's cfg envelope, and
+// count it as in-flight on its sequence.
 func (rn *Runner) onFire(r triggers.Run) {
 	job := scheduler.Job{ID: string(r.Stamp.Run), Request: rn.request(r.Service)}
 	rn.mu.Lock()
 	rn.pending[job.ID] = r
+	st := rn.inflight[r.Stamp.Sequence]
+	if st == nil {
+		st = &seqState{}
+		rn.inflight[r.Stamp.Sequence] = st
+	}
+	st.inflight++
 	rn.mu.Unlock()
 	_ = rn.k.Scheduler.Submit(job)
 }
 
 // onAdmit is the scheduler callback: execute the admitted run, free its
-// resources, then fire its successors so the cascade continues.
+// resources, fire its successors so the cascade continues, then mark the run
+// complete (closing the sequence if it was the last in-flight run).
 func (rn *Runner) onAdmit(job scheduler.Job) {
 	rn.mu.Lock()
 	r, ok := rn.pending[job.ID]
@@ -51,20 +72,51 @@ func (rn *Runner) onAdmit(job scheduler.Job) {
 
 	_, succ, err := rn.k.Run(context.Background(), r)
 	rn.k.Scheduler.Complete(job.ID)
-	if err != nil {
-		return // the failure is recorded in the spine; the cascade stops here
+
+	if err == nil {
+		fired := make(map[string]bool, len(succ))
+		for _, s := range succ {
+			if s.Topic == "" || fired[s.Topic] {
+				continue
+			}
+			fired[s.Topic] = true
+			// Emit the successor's topic, inheriting this run's sequence; the
+			// registered successor services fire via onFire (incrementing inflight).
+			rn.k.Triggers.OnEvent(s.Topic, r.Stamp)
+		}
 	}
 
-	fired := make(map[string]bool, len(succ))
-	for _, s := range succ {
-		if s.Topic == "" || fired[s.Topic] {
-			continue
-		}
-		fired[s.Topic] = true
-		// Emit the successor's topic, inheriting this run's sequence; the
-		// registered successor services fire via onFire.
-		rn.k.Triggers.OnEvent(s.Topic, r.Stamp)
+	rn.complete(r.Stamp.Sequence, err != nil)
+}
+
+// complete records one run finishing on its sequence and closes the sequence
+// (with the aggregate outcome) when no runs remain in flight.
+func (rn *Runner) complete(seq lineage.SequenceID, failed bool) {
+	rn.mu.Lock()
+	st := rn.inflight[seq]
+	if st == nil {
+		rn.mu.Unlock()
+		return
 	}
+	if failed {
+		st.failed = true
+	}
+	st.inflight--
+	done := st.inflight <= 0
+	if done {
+		delete(rn.inflight, seq)
+	}
+	aggregateFailed := st.failed
+	rn.mu.Unlock()
+
+	if !done {
+		return
+	}
+	outcome := facts.OutcomeSuccess
+	if aggregateFailed {
+		outcome = facts.OutcomeFailure
+	}
+	_ = facts.NewSpine(rn.k.Store).CloseSequence(context.Background(), seq, outcome)
 }
 
 // request returns the memory request for a service from its cfg envelope, with a
