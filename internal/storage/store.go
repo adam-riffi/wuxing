@@ -55,9 +55,10 @@ func Open(cfg Config) (*DB, error) {
 }
 
 // OpenSQLite opens (creating if absent) an embedded sqlite store at path, with
-// foreign keys on. A convenience for single-node use and tests.
+// foreign keys on and WAL journaling so a reader (DBeaver, Tableau) can browse
+// the store while the daemon writes. A convenience for single-node use and tests.
 func OpenSQLite(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
 	return Open(Config{Dialect: SQLite, DSN: dsn})
 }
 
