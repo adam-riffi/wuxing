@@ -154,6 +154,15 @@ func TestKernel_Cascade_OneSequenceAcrossRuns(t *testing.T) {
 	if len(orders) != 2 || orders[0] != 0 || orders[1] != 1 {
 		t.Errorf("sequence_order: got %v want [0 1]", orders)
 	}
+
+	// The sequence closed when the cascade ended (no more in-flight runs).
+	var closed *string
+	if err := k.Store.QueryRow(`SELECT closed_at FROM wuxing_ft_sequence WHERE sequence_id = ?`, seq).Scan(&closed); err != nil {
+		t.Fatal(err)
+	}
+	if closed == nil {
+		t.Error("sequence was not closed after the cascade ended")
+	}
 }
 
 func TestKernel_Run_UnknownService(t *testing.T) {
