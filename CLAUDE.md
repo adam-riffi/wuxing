@@ -42,6 +42,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | interpreter | `internal/kernel/interpreter` | read cfg → route: Call (validate vs vocab → bus), Run (workflow stepping + branch on emitted fact), Successors (condition eval) |
 | connectors | `internal/tools/connectors` | real sqlite tool on the bus: write/read with grant enforcement + crossing/mutation metering |
 | ai | `internal/tools/ai` | infer tool on the bus behind a Backend interface (Codex driver deferred); cost fact at incur-time |
+| ai agent mode | `internal/tools/ai/agent.go` | `AgentBackend` + `CLIAgent`: drive a real agent CLI (Hermes/Codex/Open Design) headlessly in a scratch dir; the `ai` "agent" op + `wuxing agent --brief` subcommand; config via `WUXING_AI_AGENT_*`. See [docs/quickstart-ai-agent.md](docs/quickstart-ai-agent.md) |
 | library | `internal/tools/library` | in-memory Catalog: register/deregister + serve definition/successors/triggers/list/diff (core-consulted) |
 | MTG e2e | `test/e2e/mtg_test.go` | the worked example through the real substrate: trigger → interpreter → connectors write → fact → triggers (sequence inherited) → ai; one sequence_id across the cascade |
 | storage | `internal/storage` | backend-configurable behind a `Dialect` (SQLite embedded **or** Postgres server), DSN-driven; forward-only per-dialect migrator; `?`→`$N` rebind. Postgres execution pending verification (testcontainers/Supabase) |
