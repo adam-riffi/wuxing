@@ -24,29 +24,37 @@ tools:
 		t.Fatal(err)
 	}
 
+	storePath := filepath.Join(dir, "wuxing.db")
+
 	var buf strings.Builder
 	log := zerolog.New(&buf)
 
 	// A cancelled context makes run return as soon as it reaches the idle wait,
-	// after the manifest has been loaded and logged.
+	// after the manifest is loaded and the kernel is assembled.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := run(ctx, path, log); err != nil {
+	if err := run(ctx, path, storePath, log); err != nil {
 		t.Fatalf("run: unexpected error: %v", err)
 	}
 
 	out := buf.String()
-	for _, want := range []string{"manifest loaded", "bus initialized", "stopped cleanly", "library"} {
+	for _, want := range []string{"manifest loaded", "fact store opened", "kernel ready", "stopped cleanly", "library"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log output missing %q\n--- got ---\n%s", want, out)
 		}
+	}
+
+	// The fact store file was created on boot.
+	if _, err := os.Stat(storePath); err != nil {
+		t.Errorf("fact store not created at %s: %v", storePath, err)
 	}
 }
 
 func TestRun_BadManifest(t *testing.T) {
 	log := zerolog.New(&strings.Builder{})
-	err := run(context.Background(), filepath.Join(t.TempDir(), "missing.yml"), log)
+	storePath := filepath.Join(t.TempDir(), "wuxing.db")
+	err := run(context.Background(), filepath.Join(t.TempDir(), "missing.yml"), storePath, log)
 	if err == nil {
 		t.Fatal("run: expected error for missing manifest, got nil")
 	}

@@ -24,7 +24,7 @@ docs/           architecture + vocabulary                test/      integration 
 
 ## Quickstart
 
-Requires **Go 1.23+** and (for service containers, later phases) **Docker**.
+Requires **Go 1.25+** and (for service containers, later phases) **Docker**.
 
 ```sh
 # build the daemon and the CLI into ./bin

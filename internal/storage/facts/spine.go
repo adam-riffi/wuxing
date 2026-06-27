@@ -43,7 +43,7 @@ func (s *Spine) OpenSequence(ctx context.Context, id lineage.SequenceID, originT
 		trig = originTrigger
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO wuxing_ft_sequence (sequence_id, origin_trigger_id, opened_at) VALUES (?, ?, ?)`,
+		s.db.Rebind(`INSERT INTO wuxing_ft_sequence (sequence_id, origin_trigger_id, opened_at) VALUES (?, ?, ?)`),
 		string(id), trig, now())
 	return wrap("open sequence", err)
 }
@@ -52,7 +52,7 @@ func (s *Spine) OpenSequence(ctx context.Context, id lineage.SequenceID, originT
 // sequence is unknown or already closed.
 func (s *Spine) CloseSequence(ctx context.Context, id lineage.SequenceID, outcome Outcome) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE wuxing_ft_sequence SET closed_at = ?, outcome_id = ? WHERE sequence_id = ?`,
+		s.db.Rebind(`UPDATE wuxing_ft_sequence SET closed_at = ?, outcome_id = ? WHERE sequence_id = ?`),
 		now(), int(outcome), string(id))
 	return closed("sequence", string(id), res, err)
 }
@@ -60,7 +60,7 @@ func (s *Spine) CloseSequence(ctx context.Context, id lineage.SequenceID, outcom
 // OpenRun records a triggered execution within its sequence, at st.SequenceOrder.
 func (s *Spine) OpenRun(ctx context.Context, st lineage.Stamp) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO wuxing_ft_run (run_id, sequence_id, sequence_order, opened_at) VALUES (?, ?, ?, ?)`,
+		s.db.Rebind(`INSERT INTO wuxing_ft_run (run_id, sequence_id, sequence_order, opened_at) VALUES (?, ?, ?, ?)`),
 		string(st.Run), string(st.Sequence), st.SequenceOrder, now())
 	return wrap("open run", err)
 }
@@ -68,7 +68,7 @@ func (s *Spine) OpenRun(ctx context.Context, st lineage.Stamp) error {
 // CloseRun stamps the terminal outcome on a run.
 func (s *Spine) CloseRun(ctx context.Context, id lineage.RunID, outcome Outcome) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE wuxing_ft_run SET closed_at = ?, outcome_id = ? WHERE run_id = ?`,
+		s.db.Rebind(`UPDATE wuxing_ft_run SET closed_at = ?, outcome_id = ? WHERE run_id = ?`),
 		now(), int(outcome), string(id))
 	return closed("run", string(id), res, err)
 }
@@ -76,7 +76,7 @@ func (s *Spine) CloseRun(ctx context.Context, id lineage.RunID, outcome Outcome)
 // OpenSession records a unit of work within its run, at st.RunOrder.
 func (s *Spine) OpenSession(ctx context.Context, st lineage.Stamp) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO wuxing_ft_session (session_id, run_id, sequence_id, run_order, opened_at) VALUES (?, ?, ?, ?, ?)`,
+		s.db.Rebind(`INSERT INTO wuxing_ft_session (session_id, run_id, sequence_id, run_order, opened_at) VALUES (?, ?, ?, ?, ?)`),
 		string(st.Session), string(st.Run), string(st.Sequence), st.RunOrder, now())
 	return wrap("open session", err)
 }
@@ -84,7 +84,7 @@ func (s *Spine) OpenSession(ctx context.Context, st lineage.Stamp) error {
 // CloseSession stamps the terminal outcome on a session.
 func (s *Spine) CloseSession(ctx context.Context, id lineage.SessionID, outcome Outcome) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE wuxing_ft_session SET closed_at = ?, outcome_id = ? WHERE session_id = ?`,
+		s.db.Rebind(`UPDATE wuxing_ft_session SET closed_at = ?, outcome_id = ? WHERE session_id = ?`),
 		now(), int(outcome), string(id))
 	return closed("session", string(id), res, err)
 }
@@ -100,7 +100,7 @@ type Run struct {
 // sequence_order), never by clock — parallel runs may share a timestamp.
 func (s *Spine) RunsInSequence(ctx context.Context, seq lineage.SequenceID) ([]Run, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT run_id, sequence_order, outcome_id FROM wuxing_ft_run WHERE sequence_id = ? ORDER BY sequence_order`,
+		s.db.Rebind(`SELECT run_id, sequence_order, outcome_id FROM wuxing_ft_run WHERE sequence_id = ? ORDER BY sequence_order`),
 		string(seq))
 	if err != nil {
 		return nil, wrap("list runs", err)

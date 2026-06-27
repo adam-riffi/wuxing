@@ -1,6 +1,8 @@
 // Package ai is the inference tool: run model work for a service and return a
 // result, registered as the "ai" tool on the bus. It implements one-shot infer
-// (autocomplete is infer-family); the bounded agent loop follows.
+// (autocomplete is infer-family) and a bounded "agent" mode that drives a real
+// agent CLI (Hermes Agent, Codex, Open Design, …) headlessly in a scratch
+// directory — see agent.go.
 //
 // The model backend is an interface — Codex CLI in production, a fake in tests.
 // Every call emits an ai detail fact (model, tokens, cost, ttft) via the Meter:
@@ -14,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/adam-riffi/wuxing/internal/kernel/bus"
+	"github.com/adam-riffi/wuxing/internal/kernel/lineage"
 )
 
 // Request is an inference request.
@@ -40,6 +43,7 @@ type Backend interface {
 
 // CallFact is the ai detail fact emitted per call (the cost/window-burn lane).
 type CallFact struct {
+	Stamp     lineage.Stamp
 	Model     string
 	Mode      string
 	TokensIn  int
@@ -60,9 +64,11 @@ type NopMeter struct{}
 // Call implements Meter.
 func (NopMeter) Call(CallFact) {}
 
-// Tool is the ai tool over a backend, metered.
+// Tool is the ai tool over a backend, metered. An optional agent backend (set
+// via WithAgent) enables the model-driven "agent" operation.
 type Tool struct {
 	backend Backend
+	agent   AgentBackend
 	meter   Meter
 }
 
@@ -80,6 +86,8 @@ func (t *Tool) Handler() bus.Handler {
 		switch e.Operation {
 		case "infer", "autocomplete":
 			return t.handleInfer(ctx, e)
+		case "agent":
+			return t.handleAgent(ctx, e)
 		default:
 			return e.ReplyError(fmt.Errorf("ai: unsupported operation %q", e.Operation))
 		}
@@ -108,6 +116,7 @@ func (t *Tool) handleInfer(ctx context.Context, e bus.Envelope) bus.Envelope {
 	// Cost is recorded at incur-time — before output validation, so it is
 	// captured even when a schema-constrained output fails to validate.
 	t.meter.Call(CallFact{
+		Stamp:     e.Stamp,
 		Model:     res.Model,
 		Mode:      "infer",
 		TokensIn:  res.TokensIn,
