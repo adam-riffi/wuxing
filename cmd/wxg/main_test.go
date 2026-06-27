@@ -56,20 +56,20 @@ func TestInferCmd_Tree(t *testing.T) {
 	for _, c := range infer.Commands() {
 		got[c.Name()] = true
 	}
-	if !got["chat"] || !got["agent"] {
-		t.Errorf("infer should have chat + agent subcommands, got %v", got)
+	if !got["chat"] || !got["agent"] || !got["detect"] {
+		t.Errorf("infer should have chat + agent + detect subcommands, got %v", got)
 	}
 }
 
-func TestInferChat_UnknownBackend(t *testing.T) {
+func TestInferChat_UnknownAgent(t *testing.T) {
 	root := newRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	// "bogus" is rejected before any CLI is spawned, so this is hermetic.
-	root.SetArgs([]string{"infer", "chat", "hi", "bogus"})
+	// "llama" is not a known agent — rejected before any CLI is spawned (hermetic).
+	root.SetArgs([]string{"infer", "chat", "hi", "llama"})
 
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown backend") {
-		t.Errorf("expected an unknown-backend error, got %v", err)
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown agent") {
+		t.Errorf("expected an unknown-agent error, got %v", err)
 	}
 }
