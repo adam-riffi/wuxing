@@ -36,3 +36,5 @@ vendor/
 
 # Local coverage profiles
 cov_*.out
+/wuxing
+/wxg
