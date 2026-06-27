@@ -71,7 +71,7 @@ triggers, launcher logic, interpreter). Stubs still `doc.go`-only:
 
 ## How to build, test, lint
 
-Requires Go 1.23+ (installed at `C:\Program Files\Go`; may not be on every
+Requires Go 1.25+ (per go.mod; installed at `C:\Program Files\Go`; may not be on every
 shell's PATH — prepend it). `golangci-lint` v2 (pinned v2.12.2 in CI).
 
 ```sh

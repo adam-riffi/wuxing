@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go 1.23+**
+- **Go 1.25+** (per go.mod)
 - **Docker** (for integration tests and running service containers; not needed for unit tests or building)
 - **golangci-lint** (`go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
 
