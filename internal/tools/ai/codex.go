@@ -24,8 +24,10 @@ type CodexCLI struct {
 }
 
 // NewCodexCLI returns a CodexCLI with the default `codex exec` invocation.
+// --skip-git-repo-check lets `codex exec` run in the throwaway scratch dir
+// (it otherwise refuses outside a trusted git repo).
 func NewCodexCLI() *CodexCLI {
-	return &CodexCLI{Command: "codex", Args: []string{"exec"}}
+	return &CodexCLI{Command: "codex", Args: []string{"exec", "--skip-git-repo-check"}}
 }
 
 // CodexFromEnv builds a CodexCLI, applying WUXING_CODEX_* overrides on top of the

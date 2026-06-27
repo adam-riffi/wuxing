@@ -64,7 +64,7 @@ func TestCodexFromEnv_Defaults(t *testing.T) {
 	t.Setenv("WUXING_CODEX_COMMAND", "")
 	t.Setenv("WUXING_CODEX_ARGS", "")
 	c := CodexFromEnv()
-	if c.Command != "codex" || len(c.Args) != 1 || c.Args[0] != "exec" {
-		t.Errorf("defaults should be `codex exec`: %+v", c)
+	if c.Command != "codex" || len(c.Args) != 2 || c.Args[0] != "exec" || c.Args[1] != "--skip-git-repo-check" {
+		t.Errorf("defaults should be `codex exec --skip-git-repo-check`: %+v", c)
 	}
 }

@@ -235,6 +235,24 @@ func normalizeJSON(b []byte) json.RawMessage {
 	return json.RawMessage(enc)
 }
 
+// Infer runs a one-shot completion: the prompt is the brief, the artifact is the
+// result. This makes CLIAgent a Backend as well as an AgentBackend, so a detected
+// agent CLI can serve both ai operations.
+func (a *CLIAgent) Infer(ctx context.Context, req Request) (Result, error) {
+	ar, err := a.RunAgent(ctx, AgentRequest{Brief: req.Prompt, Model: req.Model})
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Output: ar.Output, Model: ar.Model, TTFTMs: ar.TTFTMs}, nil
+}
+
+// SetTimeout overrides the per-call wall-clock bound (no-op for d <= 0).
+func (a *CLIAgent) SetTimeout(d time.Duration) {
+	if d > 0 {
+		a.spec.Timeout = d
+	}
+}
+
 // WithAgent attaches an agent backend, enabling the "agent" operation.
 func (t *Tool) WithAgent(a AgentBackend) *Tool {
 	t.agent = a
