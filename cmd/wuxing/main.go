@@ -5,6 +5,10 @@
 // until signalled and shuts down cleanly. The run loop that drives triggers and
 // admits/launches jobs, and registration of tool handlers with real backends,
 // land on top of this assembly.
+//
+// Subcommands dispatch on the first argument; the bare `wuxing` runs the daemon.
+// `wuxing agent --brief "…"` drives the configured agent CLI once (see
+// docs/quickstart-ai-agent.md) — the smoke test for an agent integration.
 package main
 
 import (
@@ -16,12 +20,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/adam-riffi/wuxing/internal/kernel"
 	"github.com/adam-riffi/wuxing/internal/manifest"
 	"github.com/adam-riffi/wuxing/internal/storage"
+	"github.com/adam-riffi/wuxing/internal/tools/ai"
 )
 
 // schedulerCapacityBytes is a placeholder memory pool for the scheduler; the
@@ -29,6 +35,15 @@ import (
 const schedulerCapacityBytes = 2 << 30 // 2 GiB
 
 func main() {
+	// Subcommands dispatch on the first argument; the bare `wuxing` runs the daemon.
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		if err := runAgentCmd(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "wuxing agent:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	manifestPath := flag.String("manifest", "manifest/boot.yml", "path to the boot manifest")
 	storePath := flag.String("store", "~/.wuxing/wuxing.db", "path to the sqlite fact store")
 	flag.Parse()
@@ -88,6 +103,44 @@ func run(ctx context.Context, manifestPath, storePath string, log zerolog.Logger
 
 	log.Info().Msg("shutdown signal received, draining")
 	log.Info().Msg("kernel stopped cleanly")
+	return nil
+}
+
+// runAgentCmd is the `wuxing agent` subcommand: drive the configured agent CLI
+// (WUXING_AI_AGENT_* env) once with a brief and print the artifact to stdout.
+// This is the smoke test for an agent integration — it exercises the real CLI
+// (Hermes, Codex, Open Design, …) without needing the rest of the kernel.
+func runAgentCmd(args []string) error {
+	fs := flag.NewFlagSet("agent", flag.ExitOnError)
+	brief := fs.String("brief", "", "the task/brief to hand the agent (required)")
+	model := fs.String("model", "", "model label to pass through (optional)")
+	timeout := fs.Int("timeout", 0, "wall-clock timeout in seconds (0 = spec default)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*brief) == "" {
+		return fmt.Errorf("--brief is required")
+	}
+
+	spec, err := ai.AgentSpecFromEnv()
+	if err != nil {
+		return fmt.Errorf("%w\nset WUXING_AI_AGENT_COMMAND (e.g. \"hermes\") — see docs/quickstart-ai-agent.md", err)
+	}
+
+	req := ai.AgentRequest{Brief: *brief, Model: *model}
+	if *timeout > 0 {
+		req.Timeout = time.Duration(*timeout) * time.Second
+	}
+	res, err := ai.NewCLIAgent(spec).RunAgent(context.Background(), req)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stdout.Write(res.Output); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "\n[wuxing agent: model=%s turns=%d tokens=%d/%d cost=%.4f %dms]\n",
+		res.Model, res.TurnCount, res.TokensIn, res.TokensOut, res.Cost, res.TTFTMs)
 	return nil
 }
 
