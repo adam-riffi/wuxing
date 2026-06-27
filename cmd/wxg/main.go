@@ -32,6 +32,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	root.AddCommand(newLibraryCmd())
+	root.AddCommand(newInferCmd())
 	return root
 }
 
