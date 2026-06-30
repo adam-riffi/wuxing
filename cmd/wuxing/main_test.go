@@ -34,7 +34,8 @@ tools:
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := run(ctx, path, storePath, log); err != nil {
+	// Empty api disables the control server so the test binds no port.
+	if err := run(ctx, path, storePath, "", log); err != nil {
 		t.Fatalf("run: unexpected error: %v", err)
 	}
 
@@ -54,7 +55,7 @@ tools:
 func TestRun_BadManifest(t *testing.T) {
 	log := zerolog.New(&strings.Builder{})
 	storePath := filepath.Join(t.TempDir(), "wuxing.db")
-	err := run(context.Background(), filepath.Join(t.TempDir(), "missing.yml"), storePath, log)
+	err := run(context.Background(), filepath.Join(t.TempDir(), "missing.yml"), storePath, "", log)
 	if err == nil {
 		t.Fatal("run: expected error for missing manifest, got nil")
 	}
