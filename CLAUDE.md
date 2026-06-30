@@ -54,7 +54,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | daemon | `cmd/wuxing` | boots, loads manifest, opens the fact store (`--store`, WAL), assembles the kernel via `kernel.Assemble`, logs readiness, clean shutdown |
 | kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
 | run loop | `internal/kernel/runner.go` | `Kernel.Run` (spine + interpreter) + a `Runner` wiring onFire→scheduler.Submit and onAdmit→Run→fire successors. A cron trigger drives a full cascade (mtg→notifier), admission-gated, under one sequence_id. `Kernel.Register` wires a service's triggers |
-| cli | `cmd/wxg` | cobra tree; `wxg infer detect`, `wxg infer chat "<prompt>" [agent]`, `wxg infer agent "<brief>" [agent]` — auto-detected agent CLI, in-process (library subcommands still stubs) |
+| cli | `cmd/wxg` | cobra tree; `wxg infer detect/chat/agent` (auto-detected agent CLI); `wxg runs` + `wxg show <sequence>` read the fact store (the `kubectl get`/`describe` of wuxing). library subcommands still stubs; `wxg run` control side designed in [docs/cli-run-control.md](docs/cli-run-control.md) (needs the daemon RPC) |
 | codex backend | `internal/tools/ai/codex.go` | `CodexCLI` implements **both** `Backend` (infer) and `AgentBackend` (agent) via `codex exec`; config `WUXING_CODEX_*` |
 | agent auto-detect | `internal/tools/ai/detect.go` | scans PATH for known agent CLIs (codex, claude, gemini, hermes, od); `Detect`/`DetectDefault`/`ResolveAgent`; `CLIAgent` now implements `Backend` too. No manual wiring — used by `wxg infer` + `wuxing agent`. See [docs/commands.md](docs/commands.md), [docs/tui-build.md](docs/tui-build.md) |
 

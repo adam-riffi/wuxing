@@ -72,6 +72,20 @@ With no `[backend]` it auto-detects; name one to force it.
 
 `[backend]` ∈ the detected agents (`codex`, `claude`, `gemini`, `hermes`, `open-design`). Flags: `--model`, `--timeout <seconds>`. The chosen agent is reported on stderr (`[wuxing: via codex]`); the answer goes to stdout.
 
+### `wxg runs` / `wxg show` — observe the engine
+
+Read the fact store directly (WAL allows it while the daemon writes), so these
+need no daemon connection. The wuxing equivalent of `kubectl get` / `describe`.
+
+| Command | Status | What it does |
+|---|---|---|
+| `wxg runs [--limit N] [--store path]` | ✅ | List recent runs: outcome, sessions, AI calls, cost, duration *(reads the spine + `processors_ft_run`)*. |
+| `wxg show <sequence> [--store path]` | ✅ | Drill into a sequence: its run cascade, each run's rollup, and the tool facts (AI calls, connector crossings). Accepts a short id prefix. |
+
+`--store` defaults to `~/.wuxing/wuxing.db`. The *control* side (`wxg run` with
+step targeting / forced sequences) is designed in [`cli-run-control.md`](cli-run-control.md)
+and needs the daemon RPC.
+
 ### `wxg library` — the service catalog (🚧 stubs)
 
 | Command | Status | What it will do |
