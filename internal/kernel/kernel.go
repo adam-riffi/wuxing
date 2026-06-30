@@ -63,6 +63,34 @@ func Assemble(store *storage.DB, memoryCapacity int64) *Kernel {
 	return k
 }
 
+// Snapshot is a point-in-time view of the kernel's live runtime state: the
+// scheduler's resources and queue, plus the running sessions. It reads in-memory
+// state (never the fact store), so it reflects what is happening right now.
+type Snapshot struct {
+	Scheduler scheduler.Snapshot `json:"scheduler"`
+	Sessions  []SessionInfo      `json:"sessions"`
+}
+
+// SessionInfo is a running unit of work in the registry.
+type SessionInfo struct {
+	Session string `json:"session"`
+	Run     string `json:"run"`
+	Service string `json:"service"`
+}
+
+// Snapshot gathers the kernel's live state for observability.
+func (k *Kernel) Snapshot() Snapshot {
+	snap := Snapshot{Scheduler: k.Scheduler.Snapshot()}
+	for _, s := range k.Sessions.Running() {
+		snap.Sessions = append(snap.Sessions, SessionInfo{
+			Session: string(s.ID),
+			Run:     string(s.Run),
+			Service: s.Service,
+		})
+	}
+	return snap
+}
+
 // Register adds a service to the catalog and wires its declarations into the
 // triggers face: each successor becomes an event rule, and each external trigger
 // (cron/event) is registered so the service starts when it fires.

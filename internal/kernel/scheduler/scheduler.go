@@ -159,6 +159,44 @@ func New(capacity int64, onAdmit func(Job), opts ...Option) *Scheduler {
 	return s
 }
 
+// Snapshot is a point-in-time view of the scheduler's live state: the resource
+// pools and the jobs running and queued. Read it for observability; it never
+// mutates.
+type Snapshot struct {
+	MemoryCapacity int64    `json:"memory_capacity"`
+	MemoryUsed     int64    `json:"memory_used"`
+	MemoryFree     int64    `json:"memory_free"`
+	SoftBudget     int64    `json:"soft_budget"`
+	WindowCapacity int64    `json:"window_capacity"`
+	WindowFree     int64    `json:"window_free"`
+	RunningIDs     []string `json:"running_ids"`
+	QueuedIDs      []string `json:"queued_ids"`
+}
+
+// Snapshot returns the scheduler's current resource and queue state.
+func (s *Scheduler) Snapshot() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snap := Snapshot{
+		MemoryCapacity: s.capacity,
+		MemoryUsed:     s.capacity - s.free,
+		MemoryFree:     s.free,
+		SoftBudget:     s.softBudget,
+		WindowCapacity: s.windowCap,
+		WindowFree:     s.window,
+		RunningIDs:     make([]string, 0, len(s.running)),
+		QueuedIDs:      make([]string, 0, len(s.queue)),
+	}
+	for id := range s.running {
+		snap.RunningIDs = append(snap.RunningIDs, id)
+	}
+	for _, j := range s.queue {
+		snap.QueuedIDs = append(snap.QueuedIDs, j.ID)
+	}
+	return snap
+}
+
 // Submit validates and enqueues a job, then admits whatever now fits. It errors
 // if the job is invalid or its request can never fit the capacity.
 func (s *Scheduler) Submit(job Job) error {

@@ -13,8 +13,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,11 +26,37 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/adam-riffi/wuxing/internal/control"
 	"github.com/adam-riffi/wuxing/internal/kernel"
 	"github.com/adam-riffi/wuxing/internal/manifest"
 	"github.com/adam-riffi/wuxing/internal/storage"
 	"github.com/adam-riffi/wuxing/internal/tools/ai"
 )
+
+// stateFrom maps the kernel's live snapshot to the control API's wire state.
+func stateFrom(k *kernel.Kernel) control.State {
+	ks := k.Snapshot()
+	st := control.State{
+		Memory: control.Resource{
+			Capacity: ks.Scheduler.MemoryCapacity,
+			Used:     ks.Scheduler.MemoryUsed,
+			Free:     ks.Scheduler.MemoryFree,
+		},
+		Window: control.Resource{
+			Capacity: ks.Scheduler.WindowCapacity,
+			Used:     ks.Scheduler.WindowCapacity - ks.Scheduler.WindowFree,
+			Free:     ks.Scheduler.WindowFree,
+		},
+		RunningJobs: ks.Scheduler.RunningIDs,
+		Queue:       ks.Scheduler.QueuedIDs,
+	}
+	for _, s := range ks.Sessions {
+		st.Sessions = append(st.Sessions, control.SessionInfo{
+			Session: s.Session, Run: s.Run, Service: s.Service,
+		})
+	}
+	return st
+}
 
 // schedulerCapacityBytes is a placeholder memory pool for the scheduler; the
 // kernel should measure real available memory and make this configurable.
@@ -46,6 +74,7 @@ func main() {
 
 	manifestPath := flag.String("manifest", "manifest/boot.yml", "path to the boot manifest")
 	storePath := flag.String("store", "~/.wuxing/wuxing.db", "path to the sqlite fact store")
+	apiAddr := flag.String("api", control.DefaultAddr, "loopback address for the control API (empty to disable)")
 	flag.Parse()
 
 	log := zerolog.New(os.Stdout).With().Timestamp().Str("component", "kernel").Logger()
@@ -55,7 +84,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *manifestPath, *storePath, log); err != nil {
+	if err := run(ctx, *manifestPath, *storePath, *apiAddr, log); err != nil {
 		log.Error().Err(err).Msg("kernel exited with error")
 		os.Exit(1)
 	}
@@ -64,7 +93,7 @@ func main() {
 // run boots the kernel: load the manifest, open the fact store, assemble the
 // faces into a live kernel, then idle until ctx is cancelled and shut down
 // cleanly (closing the bus and the store).
-func run(ctx context.Context, manifestPath, storePath string, log zerolog.Logger) error {
+func run(ctx context.Context, manifestPath, storePath, apiAddr string, log zerolog.Logger) error {
 	log.Info().Str("manifest", manifestPath).Msg("booting wuxing kernel")
 
 	m, err := manifest.Load(manifestPath)
@@ -98,10 +127,31 @@ func run(ctx context.Context, manifestPath, storePath string, log zerolog.Logger
 	}()
 	log.Info().Msg("kernel ready — faces assembled (bus, scheduler, sessions, triggers, interpreter, library)")
 
+	// The control API exposes live state (resources, queue, sessions) to wxg.
+	var srv *http.Server
+	if apiAddr != "" {
+		srv = &http.Server{
+			Addr:              apiAddr,
+			Handler:           control.Handler(func() control.State { return stateFrom(k) }),
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error().Err(err).Msg("control API error")
+			}
+		}()
+		log.Info().Str("api", apiAddr).Msg("control API listening")
+	}
+
 	log.Info().Msg("kernel idle — waiting for signal")
 	<-ctx.Done()
 
 	log.Info().Msg("shutdown signal received, draining")
+	if srv != nil {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = srv.Shutdown(shutCtx)
+		cancel()
+	}
 	log.Info().Msg("kernel stopped cleanly")
 	return nil
 }
