@@ -15,6 +15,7 @@ import (
 	"github.com/adam-riffi/wuxing/internal/metering"
 	"github.com/adam-riffi/wuxing/internal/storage"
 	"github.com/adam-riffi/wuxing/internal/tools/library"
+	"github.com/adam-riffi/wuxing/internal/tools/processors"
 )
 
 // Kernel holds the assembled control-plane faces over a fact store.
@@ -28,6 +29,7 @@ type Kernel struct {
 	Interpreter *interpreter.Interpreter
 	Library     *library.Catalog
 	Meter       *metering.StoreMeter
+	Processors  *processors.Processor
 	Runner      *Runner
 }
 
@@ -54,6 +56,7 @@ func Assemble(store *storage.DB, memoryCapacity int64) *Kernel {
 		Interpreter: interpreter.New(b, cfg.DefaultVocabulary(), minter),
 		Library:     library.New(),
 		Meter:       metering.NewStoreMeter(store),
+		Processors:  processors.New(store),
 		Runner:      rn,
 	}
 	rn.k = k

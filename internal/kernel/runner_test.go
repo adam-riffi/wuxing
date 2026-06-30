@@ -163,6 +163,22 @@ func TestKernel_Cascade_OneSequenceAcrossRuns(t *testing.T) {
 	if closed == nil {
 		t.Error("sequence was not closed after the cascade ended")
 	}
+
+	// The processors tool derived rollups automatically: a per-run row for each
+	// run, and a per-sequence row counting both.
+	var runRollups, seqRuns int
+	if err := k.Store.QueryRow(`SELECT COUNT(*) FROM processors_ft_run WHERE sequence_id = ?`, seq).Scan(&runRollups); err != nil {
+		t.Fatal(err)
+	}
+	if runRollups != 2 {
+		t.Errorf("processors_ft_run rows: got %d want 2", runRollups)
+	}
+	if err := k.Store.QueryRow(`SELECT run_count FROM processors_ft_sequence WHERE sequence_id = ?`, seq).Scan(&seqRuns); err != nil {
+		t.Fatalf("no sequence rollup derived: %v", err)
+	}
+	if seqRuns != 2 {
+		t.Errorf("processors_ft_sequence.run_count: got %d want 2", seqRuns)
+	}
 }
 
 func TestKernel_Run_UnknownService(t *testing.T) {

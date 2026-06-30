@@ -116,7 +116,11 @@ func (rn *Runner) complete(seq lineage.SequenceID, failed bool) {
 	if aggregateFailed {
 		outcome = facts.OutcomeFailure
 	}
-	_ = facts.NewSpine(rn.k.Store).CloseSequence(context.Background(), seq, outcome)
+	ctx := context.Background()
+	_ = facts.NewSpine(rn.k.Store).CloseSequence(ctx, seq, outcome)
+
+	// Derive the sequence rollup once the whole cascade has closed (best-effort).
+	_, _ = rn.k.Processors.SummarizeSequence(ctx, string(seq))
 }
 
 // request returns the memory request for a service from its cfg envelope, with a
@@ -173,6 +177,10 @@ func (k *Kernel) Run(ctx context.Context, r triggers.Run) (interpreter.Fact, []c
 	_ = spine.CloseSession(ctx, st.Session, outcome)
 	k.Sessions.Close(st.Session)
 	_ = spine.CloseRun(ctx, st.Run, outcome)
+
+	// Derive the run's rollup now that its facts are all recorded (best-effort:
+	// a missed derivation is recomputable and must not fail the run).
+	_, _ = k.Processors.SummarizeRun(ctx, string(st.Run))
 
 	if runErr != nil {
 		return nil, nil, runErr
