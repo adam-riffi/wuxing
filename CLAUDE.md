@@ -44,6 +44,7 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | ai | `internal/tools/ai` | infer tool on the bus behind a Backend interface (Codex driver deferred); cost fact at incur-time |
 | ai agent mode | `internal/tools/ai/agent.go` | `AgentBackend` + `CLIAgent`: drive a real agent CLI (Hermes/Codex/Open Design) headlessly in a scratch dir; the `ai` "agent" op + `wuxing agent --brief` subcommand; config via `WUXING_AI_AGENT_*`. See [docs/quickstart-ai-agent.md](docs/quickstart-ai-agent.md) |
 | library | `internal/tools/library` | in-memory Catalog: register/deregister + serve definition/successors/triggers/list/diff (core-consulted) |
+| processors | `internal/tools/processors` | the derive tool: rolls raw facts into `processors_ft_run` / `processors_ft_sequence` (migration 0005, both dialects); `SummarizeRun`/`SummarizeSequence` wired into the run loop (auto-derived on close). Not a cfg verb — platform machinery |
 | MTG e2e | `test/e2e/mtg_test.go` | the worked example through the real substrate: trigger → interpreter → connectors write → fact → triggers (sequence inherited) → ai; one sequence_id across the cascade |
 | storage | `internal/storage` | backend-configurable behind a `Dialect` (SQLite embedded **or** Postgres server), DSN-driven; forward-only per-dialect migrator; `?`→`$N` rebind. Postgres execution pending verification (testcontainers/Supabase) |
 | spine | `internal/storage/facts` | ft_sequence/ft_run/ft_session with append-only triggers + access layer; causal-order query |
@@ -58,9 +59,11 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | agent auto-detect | `internal/tools/ai/detect.go` | scans PATH for known agent CLIs (codex, claude, gemini, hermes, od); `Detect`/`DetectDefault`/`ResolveAgent`; `CLIAgent` now implements `Backend` too. No manual wiring — used by `wxg infer` + `wuxing agent`. See [docs/commands.md](docs/commands.md), [docs/tui-build.md](docs/tui-build.md) |
 
 The kernel's seven faces are all implemented (bus, lineage, scheduler, sessions,
-triggers, launcher logic, interpreter). Stubs still `doc.go`-only:
-`tools/{graph,processors}`, `contracts/{bus,sdk}`, `sdk`,
-`storage/{dims,artifacts}`.
+triggers, launcher logic, interpreter). Of the five tools, four are real
+(connectors, ai, library, processors); `tools/graph` is the last stub (its job —
+intra-service workflow stepping — is largely done by the interpreter; the
+graph-vs-interpreter boundary is the open question). Other stubs still
+`doc.go`-only: `contracts/{bus,sdk}`, `sdk`, `storage/{dims,artifacts}`.
 
 ## Branch & PR workflow (IMPORTANT)
 
