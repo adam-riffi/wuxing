@@ -38,6 +38,7 @@ Then run from the build dir: `./wxg …` on Linux/macOS, `.\wxg.exe …` on Wind
 |---|---|---|
 | `--manifest` | `manifest/boot.yml` | Path to the boot manifest (the compiled tool list). |
 | `--store` | `~/.wuxing/wuxing.db` | Path to the SQLite fact store (parent dirs auto-created). |
+| `--api` | `127.0.0.1:7777` | Loopback address for the control API (`wxg state` reads it). Empty disables it. |
 
 **`wuxing agent` flags**
 
@@ -85,6 +86,21 @@ need no daemon connection. The wuxing equivalent of `kubectl get` / `describe`.
 `--store` defaults to `~/.wuxing/wuxing.db`. The *control* side (`wxg run` with
 step targeting / forced sequences) is designed in [`cli-run-control.md`](cli-run-control.md)
 and needs the daemon RPC.
+
+### `wxg state` — live daemon state
+
+`runs`/`show` read **history** (the fact store). `state` reads **live** in-memory
+state from the **running daemon** over its control API — so the daemon must be up.
+
+| Command | Status | What it does |
+|---|---|---|
+| `wxg state [--api host:port]` | ✅ | Current resources (memory + AI window used/free), the scheduler queue, running jobs, and running sessions. |
+
+`--api` defaults to `127.0.0.1:7777` (matches the daemon's `--api`). Today the
+queue/sessions usually read empty because runs execute synchronously; they fill
+in once the daemon runs concurrent / long work (container services). The resource
+pools always show. This is the first piece of the **daemon control channel** that
+the control commands and a TUI will build on.
 
 ### `wxg library` — the service catalog (🚧 stubs)
 
