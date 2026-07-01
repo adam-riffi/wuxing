@@ -52,7 +52,8 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | detail facts | `internal/storage/facts` | connector crossing/mutation + ai-call tables (migration 0003, both dialects) + `Detail` access layer keyed by the lineage stamp |
 | admin index | `internal/storage/admin.go` | `wuxing_admin_service` table (migration 0004, both dialects) + Record/Get/List/Remove — declared service-index state (hard-saved cfg JSON) |
 | metering | `internal/metering` | `StoreMeter` implements connectors.Meter + ai.Meter; tool facts persist to the detail tables, stamped from the envelope lineage |
-| daemon | `cmd/wuxing` | boots, loads manifest, opens the fact store (`--store`, WAL), assembles the kernel, serves the control API (`--api`, loopback), clean shutdown |
+| daemon | `cmd/wuxing` | boots, loads manifest + services (`--services`), opens the fact store (`--store`, WAL), assembles the kernel, **registers tool handlers** (ai over the auto-detected agent CLI; connectors over `domain.db` with the union of loaded grants), **starts the cron watcher**, serves the control API (`--api`), clean shutdown. **The core loop is closed**: cfg on disk → cron fires → admission → real AI → facts/rollups, zero Go |
+| cron watcher | `internal/kernel/triggers/cron.go` | `StartCron` parses every registered rule (robfig/cron: 5-field, @descriptors, CRON_TZ) and fires due schedules via FireExternal (new sequence per fire); bad spec fails the start. cfg: trigger `timezone`, service-level `concurrency: allow\|forbid` (forbid = skip overlapping fire, enforced in Runner.skipOverlap) |
 | control API | `internal/control` | loopback HTTP/JSON daemon channel; `GET /state` serves `kernel.Snapshot()` (scheduler resources + queue + running sessions). `wxg state` is the client. The keystone for the control side — write side (drive runs) extends it |
 | kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
 | run loop | `internal/kernel/runner.go` | `Kernel.Run` (spine + interpreter) + a `Runner` wiring onFire→scheduler.Submit and onAdmit→Run→fire successors. Jobs carry the FULL cfg envelope (request/limit/ai_request/priority/max_wait/on_starve → `jobFor`); starved-out jobs (ExpiryFail) release their sequence via `onExpire`. A cron trigger drives a full cascade under one sequence_id. `Kernel.Register` wires a service's triggers |
@@ -105,41 +106,32 @@ complete. Remaining work is wiring + content:
 through the real Go components (`test/e2e/mtg_test.go`). What remains is the
 real-world I/O glue and content:
 
-1. **integration glue** — real Docker `Engine` behind the launcher; triggers'
-   cron clock + the bus subscription that feeds `OnEvent`; a real Codex `ai`
-   backend; a real connector `Meter` writing the crossing/mutation fact tables.
-2. **Postgres backend** — the storage `Dialect` abstraction + Postgres migrations
-   are in place (DSN-driven, so Supabase/local Postgres is just `.env`). Next:
-   verify the Postgres path (testcontainers in CI's integration job, or against a
-   real Supabase DSN), wire pgx simple-protocol for the multi-statement
-   migrations, port the connector to Postgres, and open the fact store (WAL for
-   sqlite) on daemon boot so DBeaver/Tableau can read it live.
-3. **the run loop is driving cascades** — `Kernel.Run` + the `Runner` (onFire →
-   Submit → onAdmit → Run → fire successors) run an admission-gated cascade
-   in-process under one sequence_id; `Kernel.Register` wires a service's triggers.
-   Sequence-closing and the admin service-index table are done. **The
-   in-process system is complete and operational; the SQLite-verifiable work is
-   exhausted.** The remaining items all need the user's infra:
-   - **real Docker `Engine`** behind the launcher → run container-script services
-     (start Docker Desktop);
-   - **real Codex backend** for `ai` → real inference (Codex CLI + auth, or an
-     OpenAI key in `.env`);
-   - **Postgres execution verification** → a Supabase DSN in `.env` or Docker for
-     testcontainers, plus pgx simple-protocol for the plpgsql migrations.
+**THE CORE LOOP IS CLOSED (v1 core, verified live 2026-07-02):** a cfg on disk →
+`wuxing --services` loads it → the cron watcher fires it → admission-gated run →
+real AI (auto-detected codex) → facts + rollups + sequence close → visible in
+`wxg runs`/`show`. Zero Go code, zero manual trigger.
 
-   Small follow-ups that pair with the above (not standalone-valuable yet): wire
-   `library`/`Kernel.Register` to persist+load through the admin index; register
-   the tools in the daemon (`cmd/wuxing`) with real backends so a service runs in
-   the live daemon, not just the kernel test.
-4. **admin tables** — the service-index/manifest admin tables.
-5. **content** — first-party service cfgs (messenger, state). (Per-step `with:`
-   args are done — cfgs are self-driving: the interpreter merges a step's args
-   with the accumulated facts into its payload.)
+Remaining, in order:
+
+1. **`POST /run` + `wxg run <service>`** — the control API's write side (v1 item
+   #3): fire a service on demand; then the run-control params
+   (docs/cli-run-control.md: --step/--with/--sequence/--no-cascade/--dry-run).
+2. **`wxg library index/deindex` + `wxg services`** — catalog management over the
+   control API; wire library to persist+load through the admin index (v1 #4).
+3. **real Docker `Engine`** behind the launcher (needs Docker Desktop) — executes
+   `script:` steps per docs/cfg-guide.md's contract (stdin fact → stdout fact,
+   exit → outcome); brings cfg params image/env/timeout/retry/on_error
+   (docs/cfg-audit.md tier 3) and makes `wxg state` queues/sessions light up.
+4. **Postgres execution verification** — Supabase DSN or testcontainers + pgx
+   simple-protocol for the plpgsql migrations.
+5. **content** — first-party service cfgs (messenger → Discord, state); make the
+   shipped `services/mtg` real (Scryfall via script once Docker lands).
+6. **ai governance block** — per-service model/backend, max_cost, max_turns;
+   ai grant enforcement (audit tier 2).
 
 Deferred integration glue: the real Docker `Engine` (github.com/docker/docker)
-behind the launcher interface; triggers' cron *clock* (robfig/cron driving
-FireExternal) and the bus subscription that feeds `OnEvent`. The logic for all of
-these is done and unit-tested; only the I/O wiring remains.
+behind the launcher interface — the last big I/O seam. (The cron clock is done:
+robfig/cron drives FireExternal via `StartCron`.)
 
 The worked example to aim for (acceptance): the MTG new-set notifier end-to-end
 (checker → connector write → event trigger → notifier → messenger) observed in
@@ -155,12 +147,13 @@ backend-configurable (SQLite default / Postgres via DSN). The daemon
 (`kernel.Assemble`), then idles. Everything is unit/substrate-tested; **M1
 (the worked example through the real Go components) is reached**.
 
-**Where to pick up:** Next tasks item 3 — **the run loop**. The daemon assembles
-the kernel but doesn't drive it yet. Wire `triggers.onFire` → open a spine
-sequence/run/session (`facts.Spine`) → run the service's workflow via the
-`interpreter` → close the run; wire `scheduler.onAdmit` → launch; register the
-tools. The in-process (cfg-only) path is sqlite-verifiable now; the container
-path needs the real Docker engine (below).
+**Where to pick up:** Next tasks item 1 — **`POST /run` + `wxg run`** (the
+control API's write side). The core loop is closed: the daemon loads cfgs,
+registers tools (ai over the auto-detected agent CLI), and the cron watcher
+drives real runs end to end. What's missing is firing a service *on demand* from
+the CLI — extend `internal/control` with a POST /run handler that calls
+`Triggers.FireExternal` (KindManual), then the run-control params
+(docs/cli-run-control.md). After that: catalog commands, then the Docker engine.
 
 **Parked — needs the user's infrastructure (do NOT blind-debug via CI):**
 - Postgres *execution* verification — needs Docker (testcontainers) running or a
