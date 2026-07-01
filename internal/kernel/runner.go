@@ -60,7 +60,16 @@ func (rn *Runner) onFire(r triggers.Run) {
 	}
 	st.inflight++
 	rn.mu.Unlock()
-	_ = rn.k.Scheduler.Submit(job)
+
+	if err := rn.k.Scheduler.Submit(job); err != nil {
+		// The job was refused outright (never admitted): roll back the
+		// bookkeeping and count it as a failed run on its sequence, so nothing
+		// leaks. Register's Fits check makes this rare (duplicate ids, races).
+		rn.mu.Lock()
+		delete(rn.pending, job.ID)
+		rn.mu.Unlock()
+		rn.complete(r.Stamp.Sequence, true)
+	}
 }
 
 // skipOverlap reports whether this fire should be dropped because the service
