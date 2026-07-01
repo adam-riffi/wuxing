@@ -106,7 +106,7 @@ func (k *Kernel) Register(svc *cfg.Service) error {
 	for _, t := range svc.Triggers {
 		switch t.Kind {
 		case "cron":
-			k.Triggers.RegisterCron(svc.Name, t.Spec)
+			k.Triggers.RegisterCron(svc.Name, t.CronSpec())
 		case "event":
 			k.Triggers.RegisterEvent(svc.Name, t.Spec)
 		}

@@ -10,18 +10,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
 // Service is a parsed service cfg — its ID card.
 type Service struct {
-	Name       string      `yaml:"name"`
-	Version    string      `yaml:"version"`
-	Envelope   Envelope    `yaml:"envelope"`
-	Allow      []Grant     `yaml:"allow"`
-	Triggers   []Trigger   `yaml:"triggers"`
-	Workflow   []Step      `yaml:"workflow"`
-	Successors []Successor `yaml:"successors"`
+	Name        string      `yaml:"name"`
+	Version     string      `yaml:"version"`
+	Envelope    Envelope    `yaml:"envelope"`
+	Allow       []Grant     `yaml:"allow"`
+	Triggers    []Trigger   `yaml:"triggers"`
+	Workflow    []Step      `yaml:"workflow"`
+	Successors  []Successor `yaml:"successors"`
+	Concurrency string      `yaml:"concurrency"` // overlapping runs: "allow" (default) | "forbid" (skip while one is in flight)
 }
 
 // Envelope is the service's resource/scheduling profile.
@@ -44,8 +46,18 @@ type Grant struct {
 
 // Trigger declares an external initiation (cron or event).
 type Trigger struct {
-	Kind string `yaml:"kind"` // "cron" | "event"
-	Spec string `yaml:"spec"` // cron expression or event topic
+	Kind     string `yaml:"kind"`     // "cron" | "event"
+	Spec     string `yaml:"spec"`     // cron expression (5-field or @descriptor) or event topic
+	Timezone string `yaml:"timezone"` // IANA zone for cron specs (default: host local)
+}
+
+// CronSpec returns the spec as the cron watcher reads it, folding the declared
+// timezone into a CRON_TZ prefix.
+func (t Trigger) CronSpec() string {
+	if t.Timezone == "" {
+		return t.Spec
+	}
+	return "CRON_TZ=" + t.Timezone + " " + t.Spec
 }
 
 // Step is one node of the service's internal workflow: either a tool.operation
@@ -111,6 +123,29 @@ func (s *Service) Validate(vocab Vocabulary) error {
 	case "", "escalate", "fail":
 	default:
 		return fmt.Errorf("cfg: %q: invalid on_starve %q (escalate | fail)", s.Name, s.Envelope.OnStarve)
+	}
+	switch s.Concurrency {
+	case "", "allow", "forbid":
+	default:
+		return fmt.Errorf("cfg: %q: invalid concurrency %q (allow | forbid)", s.Name, s.Concurrency)
+	}
+
+	for i, tr := range s.Triggers {
+		switch tr.Kind {
+		case "cron":
+			if _, err := cron.ParseStandard(tr.CronSpec()); err != nil {
+				return fmt.Errorf("cfg: %q: trigger %d cron spec %q: %w", s.Name, i, tr.CronSpec(), err)
+			}
+		case "event":
+			if tr.Spec == "" {
+				return fmt.Errorf("cfg: %q: trigger %d event has no topic", s.Name, i)
+			}
+			if tr.Timezone != "" {
+				return fmt.Errorf("cfg: %q: trigger %d: timezone applies to cron triggers only", s.Name, i)
+			}
+		default:
+			return fmt.Errorf("cfg: %q: trigger %d has invalid kind %q (cron | event)", s.Name, i, tr.Kind)
+		}
 	}
 
 	ids := make(map[string]bool, len(s.Workflow))

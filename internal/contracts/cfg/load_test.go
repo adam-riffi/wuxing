@@ -81,6 +81,53 @@ func TestLoadDir_MissingRoot(t *testing.T) {
 	}
 }
 
+func TestValidate_Triggers(t *testing.T) {
+	vocab := DefaultVocabulary()
+	base := func(tr Trigger) *Service {
+		return &Service{Name: "s", Envelope: Envelope{Request: 1}, Triggers: []Trigger{tr}}
+	}
+
+	if err := base(Trigger{Kind: "cron", Spec: "0 9 * * *"}).Validate(vocab); err != nil {
+		t.Errorf("plain cron: %v", err)
+	}
+	if err := base(Trigger{Kind: "cron", Spec: "0 9 * * *", Timezone: "Asia/Tokyo"}).Validate(vocab); err != nil {
+		t.Errorf("cron with timezone: %v", err)
+	}
+	if err := base(Trigger{Kind: "cron", Spec: "@every 5s"}).Validate(vocab); err != nil {
+		t.Errorf("descriptor cron: %v", err)
+	}
+	if err := base(Trigger{Kind: "cron", Spec: "not cron"}).Validate(vocab); err == nil {
+		t.Error("bad cron spec must fail")
+	}
+	if err := base(Trigger{Kind: "cron", Spec: "0 9 * * *", Timezone: "Not/AZone"}).Validate(vocab); err == nil {
+		t.Error("bad timezone must fail")
+	}
+	if err := base(Trigger{Kind: "event", Spec: "mtg-db updated"}).Validate(vocab); err != nil {
+		t.Errorf("event trigger: %v", err)
+	}
+	if err := base(Trigger{Kind: "event", Spec: ""}).Validate(vocab); err == nil {
+		t.Error("event without topic must fail")
+	}
+	if err := base(Trigger{Kind: "event", Spec: "x", Timezone: "UTC"}).Validate(vocab); err == nil {
+		t.Error("timezone on an event trigger must fail")
+	}
+	if err := base(Trigger{Kind: "webhook", Spec: "x"}).Validate(vocab); err == nil {
+		t.Error("unknown trigger kind must fail")
+	}
+}
+
+func TestValidate_Concurrency(t *testing.T) {
+	vocab := DefaultVocabulary()
+	ok := &Service{Name: "s", Envelope: Envelope{Request: 1}, Concurrency: "forbid"}
+	if err := ok.Validate(vocab); err != nil {
+		t.Errorf("forbid: %v", err)
+	}
+	bad := &Service{Name: "s", Envelope: Envelope{Request: 1}, Concurrency: "replace"}
+	if err := bad.Validate(vocab); err == nil {
+		t.Error("unknown concurrency must fail")
+	}
+}
+
 func TestValidate_ScriptSteps(t *testing.T) {
 	vocab := DefaultVocabulary()
 

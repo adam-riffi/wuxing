@@ -244,6 +244,46 @@ func TestRunner_OnExpireReleasesTheSequence(t *testing.T) {
 	}
 }
 
+func TestRunner_ConcurrencyForbidSkipsOverlap(t *testing.T) {
+	k := testKernel(t)
+	svc := &cfg.Service{
+		Name:        "mtg",
+		Envelope:    cfg.Envelope{Request: 1},
+		Concurrency: "forbid",
+	}
+	if err := k.Register(svc); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a run already in flight (queued but not admitted).
+	rn := k.Runner
+	prior := k.directRun("mtg")
+	rn.mu.Lock()
+	rn.pending["prior"] = prior
+	rn.mu.Unlock()
+
+	k.Triggers.FireExternal("mtg", triggers.KindCron)
+
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	if len(rn.pending) != 1 {
+		t.Errorf("overlapping fire should be skipped, pending=%d", len(rn.pending))
+	}
+
+	// concurrency: allow (default) does not skip — the fire runs to completion
+	// (synchronously) and lands in the spine.
+	allow := &cfg.Service{Name: "other", Envelope: cfg.Envelope{Request: 1}}
+	rn.mu.Unlock()
+	if err := k.Register(allow); err != nil {
+		t.Fatal(err)
+	}
+	r2 := k.Triggers.FireExternal("other", triggers.KindCron)
+	rn.mu.Lock()
+	if n := spineCount(t, k, "wuxing_ft_run", string(r2.Stamp.Sequence)); n != 1 {
+		t.Errorf("default concurrency should run: got %d spine runs", n)
+	}
+}
+
 func TestKernel_Run_UnknownService(t *testing.T) {
 	k := testKernel(t)
 	r := k.directRun("ghost")

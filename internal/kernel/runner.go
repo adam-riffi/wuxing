@@ -46,6 +46,10 @@ func newRunner() *Runner {
 // by its run id, carrying the service's full cfg envelope (request, limit, AI
 // window, priority, patience), and count it as in-flight on its sequence.
 func (rn *Runner) onFire(r triggers.Run) {
+	if rn.skipOverlap(r.Service) {
+		return // concurrency: forbid — a run of this service is already in flight
+	}
+
 	job := rn.jobFor(r)
 	rn.mu.Lock()
 	rn.pending[job.ID] = r
@@ -57,6 +61,28 @@ func (rn *Runner) onFire(r triggers.Run) {
 	st.inflight++
 	rn.mu.Unlock()
 	_ = rn.k.Scheduler.Submit(job)
+}
+
+// skipOverlap reports whether this fire should be dropped because the service
+// declares `concurrency: forbid` and already has a run in flight — queued
+// (pending) or executing (a live session). The k8s CronJob "Forbid" semantics:
+// skip the overlapping fire, don't queue it.
+func (rn *Runner) skipOverlap(service string) bool {
+	svc, err := rn.k.Library.GetDefinition(service)
+	if err != nil || svc.Concurrency != "forbid" {
+		return false
+	}
+	if rn.k.Sessions.HasRunning(service) {
+		return true
+	}
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	for _, p := range rn.pending {
+		if p.Service == service {
+			return true
+		}
+	}
+	return false
 }
 
 // onAdmit is the scheduler callback: execute the admitted run, free its
