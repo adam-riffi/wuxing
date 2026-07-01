@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -33,7 +34,25 @@ import (
 	"github.com/adam-riffi/wuxing/internal/manifest"
 	"github.com/adam-riffi/wuxing/internal/storage"
 	"github.com/adam-riffi/wuxing/internal/tools/ai"
+	"github.com/adam-riffi/wuxing/internal/tools/connectors"
 )
+
+// connectorGrants maps a service's declared connectors allowlist entries
+// (target "DATABASE.TABLE") onto the connectors tool's grant type.
+func connectorGrants(svc *cfg.Service) []connectors.Grant {
+	var out []connectors.Grant
+	for _, g := range svc.Allow {
+		if g.Tool != "connectors" || g.Target == "" {
+			continue
+		}
+		db, table, ok := strings.Cut(g.Target, ".")
+		if !ok {
+			continue
+		}
+		out = append(out, connectors.Grant{Database: db, Table: table})
+	}
+	return out
+}
 
 // stateFrom maps the kernel's live snapshot to the control API's wire state.
 func stateFrom(k *kernel.Kernel) control.State {
@@ -133,6 +152,7 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 	// Load the services directory: parse + validate each folder's cfg, register
 	// it with the kernel (library + trigger wiring), and persist its ID card to
 	// the admin index. The cfg is the program; this is where it gets loaded.
+	var grants []connectors.Grant
 	if servicesDir != "" {
 		loaded, err := cfg.LoadDir(servicesDir, cfg.DefaultVocabulary())
 		if err != nil {
@@ -145,6 +165,7 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 			if err := k.Register(l.Service); err != nil {
 				return fmt.Errorf("register service %q: %w", l.Service.Name, err)
 			}
+			grants = append(grants, connectorGrants(l.Service)...)
 			cfgJSON, _ := json.Marshal(l.Service)
 			if err := store.RecordService(bootCtx, storage.ServiceRecord{
 				ServiceID: l.Service.Name,
@@ -161,6 +182,33 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 		}
 		log.Info().Int("service_count", len(loaded)).Str("dir", servicesDir).Msg("services loaded")
 	}
+
+	// Register the tool handlers on the bus so fired services can execute.
+	// ai: over the auto-detected agent CLI (a missing backend degrades to a
+	// clear per-call error, not a boot failure).
+	if agent, label, err := ai.ResolveAgent(""); err == nil {
+		_ = k.Bus.Register("ai", ai.New(agent, k.Meter).WithAgent(agent).Handler())
+		log.Info().Str("backend", label).Msg("ai tool registered")
+	} else {
+		log.Warn().Err(err).Msg("ai tool not registered — ai steps will fail")
+	}
+	// connectors: over the domain store (the cargo DB), granted the union of the
+	// loaded services' allowlists.
+	domainPath := filepath.Join(filepath.Dir(resolved), "domain.db")
+	domainDB, err := sql.Open("sqlite", "file:"+domainPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		return fmt.Errorf("open domain store: %w", err)
+	}
+	defer func() { _ = domainDB.Close() }()
+	_ = k.Bus.Register("connectors", connectors.New(domainDB, grants, k.Meter).Handler())
+	log.Info().Str("domain", domainPath).Int("grants", len(grants)).Msg("connectors tool registered")
+
+	// Start the cron watcher: fires due schedules as new sequences.
+	watched, err := k.Triggers.StartCron(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info().Int("schedules", watched).Msg("cron watcher started")
 
 	// The control API exposes live state (resources, queue, sessions) to wxg.
 	var srv *http.Server
