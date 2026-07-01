@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/kernel/interpreter"
@@ -42,10 +43,10 @@ func newRunner() *Runner {
 }
 
 // onFire is the triggers callback: submit the fired run to the scheduler, keyed
-// by its run id, with the memory request from the service's cfg envelope, and
-// count it as in-flight on its sequence.
+// by its run id, carrying the service's full cfg envelope (request, limit, AI
+// window, priority, patience), and count it as in-flight on its sequence.
 func (rn *Runner) onFire(r triggers.Run) {
-	job := scheduler.Job{ID: string(r.Stamp.Run), Request: rn.request(r.Service)}
+	job := rn.jobFor(r)
 	rn.mu.Lock()
 	rn.pending[job.ID] = r
 	st := rn.inflight[r.Stamp.Sequence]
@@ -123,13 +124,48 @@ func (rn *Runner) complete(seq lineage.SequenceID, failed bool) {
 	_, _ = rn.k.Processors.SummarizeSequence(ctx, string(seq))
 }
 
-// request returns the memory request for a service from its cfg envelope, with a
-// minimal floor so a service without a declared request can still be admitted.
-func (rn *Runner) request(service string) int64 {
-	if svc, err := rn.k.Library.GetDefinition(service); err == nil && svc.Envelope.Request > 0 {
-		return svc.Envelope.Request
+// jobFor maps a service's cfg envelope onto a scheduler job — the point where
+// the declared contract (request/limit/ai_request/priority/max_wait/on_starve)
+// becomes the enforced one. A service without a declared request gets a minimal
+// floor so it can still be admitted.
+func (rn *Runner) jobFor(r triggers.Run) scheduler.Job {
+	job := scheduler.Job{ID: string(r.Stamp.Run), Request: 1}
+	svc, err := rn.k.Library.GetDefinition(r.Service)
+	if err != nil {
+		return job
 	}
-	return 1
+	env := svc.Envelope
+	if env.Request > 0 {
+		job.Request = env.Request
+	}
+	job.Limit = env.Limit
+	job.AIRequest = env.AIRequest
+	if env.Priority == "user" {
+		job.Priority = scheduler.PriorityUser
+	}
+	if env.MaxWait != "" {
+		if d, perr := time.ParseDuration(env.MaxWait); perr == nil {
+			job.MaxWait = d
+		}
+	}
+	if env.OnStarve == "fail" {
+		job.OnExpiry = scheduler.ExpiryFail // default is escalate
+	}
+	return job
+}
+
+// onExpire is the scheduler callback for a job dropped by ExpiryFail: the run
+// never got admitted, so release its bookkeeping and count it as a failed run
+// on its sequence (closing the sequence if it was the last in flight).
+func (rn *Runner) onExpire(job scheduler.Job) {
+	rn.mu.Lock()
+	r, ok := rn.pending[job.ID]
+	delete(rn.pending, job.ID)
+	rn.mu.Unlock()
+	if !ok {
+		return
+	}
+	rn.complete(r.Stamp.Sequence, true)
 }
 
 // Run executes one triggered service run end to end (in-process, cfg-only path):
