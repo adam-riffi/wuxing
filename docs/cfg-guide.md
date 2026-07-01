@@ -25,7 +25,7 @@ services/
 | Section | What it declares | Read by |
 |---|---|---|
 | `name` / `version` | identity (folder name is the default) | library, admin index |
-| `envelope` | resource profile: memory floor/ceiling, AI-window cost, priority, queue patience | scheduler (admission) |
+| `envelope` | resource/scheduling profile: `request` (admission floor) · `limit` (burst ceiling) · `ai_request` (AI-window cost) · `priority` (user/background) · `max_wait` (queue patience) · `on_starve` (escalate into the overclock reserve, or fail) | scheduler (admission) |
 | `allow` | the capability allowlist — every tool.operation (and target) the service may call; anything else is refused at the bus | connectors/ai (grants) |
 | `triggers` | when the service starts: `cron` (clock) or `event` (a topic another service emitted) | triggers face |
 | `workflow` | the internal route: ordered steps with branching — **the program body** | interpreter |
