@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/kernel/bus"
 	"github.com/adam-riffi/wuxing/internal/kernel/lineage"
+	"github.com/adam-riffi/wuxing/internal/kernel/scheduler"
 	"github.com/adam-riffi/wuxing/internal/kernel/triggers"
 	"github.com/adam-riffi/wuxing/internal/storage"
 )
@@ -178,6 +180,67 @@ func TestKernel_Cascade_OneSequenceAcrossRuns(t *testing.T) {
 	}
 	if seqRuns != 2 {
 		t.Errorf("processors_ft_sequence.run_count: got %d want 2", seqRuns)
+	}
+}
+
+func TestRunner_JobCarriesTheEnvelope(t *testing.T) {
+	k := testKernel(t)
+	svc := &cfg.Service{
+		Name: "mtg",
+		Envelope: cfg.Envelope{
+			Request:   64,
+			Limit:     128,
+			AIRequest: 2,
+			Priority:  "user",
+			MaxWait:   "10m",
+			OnStarve:  "fail",
+		},
+	}
+	if err := k.Register(svc); err != nil {
+		t.Fatal(err)
+	}
+
+	job := k.Runner.jobFor(k.directRun("mtg"))
+	if job.Request != 64 || job.Limit != 128 || job.AIRequest != 2 {
+		t.Errorf("resources not threaded: %+v", job)
+	}
+	if job.Priority != scheduler.PriorityUser {
+		t.Errorf("priority not threaded: %+v", job.Priority)
+	}
+	if job.MaxWait != 10*time.Minute {
+		t.Errorf("max_wait not threaded: %v", job.MaxWait)
+	}
+	if job.OnExpiry != scheduler.ExpiryFail {
+		t.Errorf("on_starve not threaded: %v", job.OnExpiry)
+	}
+
+	// Defaults: unknown service gets the minimal floor + escalate.
+	def := k.Runner.jobFor(k.directRun("ghost"))
+	if def.Request != 1 || def.OnExpiry != scheduler.ExpiryEscalate || def.Priority != scheduler.PriorityBackground {
+		t.Errorf("defaults: %+v", def)
+	}
+}
+
+func TestRunner_OnExpireReleasesTheSequence(t *testing.T) {
+	k := testKernel(t)
+	rn := k.Runner
+
+	r := k.directRun("mtg")
+	job := scheduler.Job{ID: string(r.Stamp.Run)}
+	rn.mu.Lock()
+	rn.pending[job.ID] = r
+	rn.inflight[r.Stamp.Sequence] = &seqState{inflight: 1}
+	rn.mu.Unlock()
+
+	rn.onExpire(job)
+
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+	if _, ok := rn.pending[job.ID]; ok {
+		t.Error("expired job should be released from pending")
+	}
+	if _, ok := rn.inflight[r.Stamp.Sequence]; ok {
+		t.Error("expired job should release its sequence bookkeeping")
 	}
 }
 

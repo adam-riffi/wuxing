@@ -11,7 +11,8 @@ envelope:
   limit: 134217728        # 128 MiB burst ceiling
   ai_request: 1           # consumes 1 unit of the AI window
   priority: background
-  max_wait: 10m
+  max_wait: 10m           # tolerate queueing this long…
+  on_starve: escalate     # …then age up to user class (may draw the overclock reserve)
 
 allow:
   - tool: ai

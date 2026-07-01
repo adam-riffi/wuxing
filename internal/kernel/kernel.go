@@ -50,7 +50,7 @@ func Assemble(store *storage.DB, memoryCapacity int64) *Kernel {
 		Store:       store,
 		Bus:         b,
 		Minter:      minter,
-		Scheduler:   scheduler.New(memoryCapacity, rn.onAdmit),
+		Scheduler:   scheduler.New(memoryCapacity, rn.onAdmit, scheduler.WithOnExpire(rn.onExpire)),
 		Sessions:    sessions.New(),
 		Triggers:    triggers.New(minter, rn.onFire),
 		Interpreter: interpreter.New(b, cfg.DefaultVocabulary(), minter),

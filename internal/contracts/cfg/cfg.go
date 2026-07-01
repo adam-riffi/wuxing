@@ -31,6 +31,7 @@ type Envelope struct {
 	AIRequest int64  `yaml:"ai_request"` // AI-quota window cost (0 = non-AI)
 	Priority  string `yaml:"priority"`   // "user" | "background" | ""
 	MaxWait   string `yaml:"max_wait"`   // queue patience, a duration string
+	OnStarve  string `yaml:"on_starve"`  // past max_wait: "escalate" (default; may draw the overclock reserve) | "fail"
 }
 
 // Grant is an entry in the capability allowlist: a tool operation, optionally
@@ -105,6 +106,11 @@ func (s *Service) Validate(vocab Vocabulary) error {
 		if _, err := time.ParseDuration(s.Envelope.MaxWait); err != nil {
 			return fmt.Errorf("cfg: %q: invalid max_wait %q: %w", s.Name, s.Envelope.MaxWait, err)
 		}
+	}
+	switch s.Envelope.OnStarve {
+	case "", "escalate", "fail":
+	default:
+		return fmt.Errorf("cfg: %q: invalid on_starve %q (escalate | fail)", s.Name, s.Envelope.OnStarve)
 	}
 
 	ids := make(map[string]bool, len(s.Workflow))
