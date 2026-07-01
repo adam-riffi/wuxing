@@ -1,0 +1,46 @@
+# mtg — the worked example service (yml-only variant).
+# A service is a folder: this cfg is its ID card. This variant composes platform
+# tools only, so it runs fully in-process today (no container needed). The
+# script variant of the same service is docs/cfg-guide.md's example.
+
+name: mtg
+version: "1"
+
+envelope:
+  request: 67108864       # 64 MiB floor for admission
+  limit: 134217728        # 128 MiB burst ceiling
+  ai_request: 1           # consumes 1 unit of the AI window
+  priority: background
+  max_wait: 10m
+
+allow:
+  - tool: ai
+    operation: infer
+  - tool: connectors
+    operation: write
+    target: MTG.SETS
+
+triggers:
+  - kind: cron
+    spec: "0 9 * * *"     # daily 09:00 check
+
+workflow:
+  - id: check
+    tool: ai
+    operation: infer
+    with:
+      prompt: "Did a new Magic: The Gathering set release today? Reply as JSON {\"new_set\": bool, \"set_name\": string}."
+    branch:
+      - when: new_set == true
+        goto: record
+
+  - id: record
+    tool: connectors
+    operation: write
+    with:
+      target: MTG.SETS
+
+successors:
+  - service: notifier
+    topic: mtg-db updated
+    when: new_set == true

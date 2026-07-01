@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/control"
 	"github.com/adam-riffi/wuxing/internal/kernel"
 	"github.com/adam-riffi/wuxing/internal/manifest"
@@ -75,6 +77,7 @@ func main() {
 	manifestPath := flag.String("manifest", "manifest/boot.yml", "path to the boot manifest")
 	storePath := flag.String("store", "~/.wuxing/wuxing.db", "path to the sqlite fact store")
 	apiAddr := flag.String("api", control.DefaultAddr, "loopback address for the control API (empty to disable)")
+	servicesDir := flag.String("services", "", "directory of service folders (cfg + scripts) to load at boot")
 	flag.Parse()
 
 	log := zerolog.New(os.Stdout).With().Timestamp().Str("component", "kernel").Logger()
@@ -84,7 +87,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, *manifestPath, *storePath, *apiAddr, log); err != nil {
+	if err := run(ctx, *manifestPath, *storePath, *apiAddr, *servicesDir, log); err != nil {
 		log.Error().Err(err).Msg("kernel exited with error")
 		os.Exit(1)
 	}
@@ -93,7 +96,7 @@ func main() {
 // run boots the kernel: load the manifest, open the fact store, assemble the
 // faces into a live kernel, then idle until ctx is cancelled and shut down
 // cleanly (closing the bus and the store).
-func run(ctx context.Context, manifestPath, storePath, apiAddr string, log zerolog.Logger) error {
+func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir string, log zerolog.Logger) error {
 	log.Info().Str("manifest", manifestPath).Msg("booting wuxing kernel")
 
 	m, err := manifest.Load(manifestPath)
@@ -126,6 +129,38 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr string, log zerol
 		}
 	}()
 	log.Info().Msg("kernel ready — faces assembled (bus, scheduler, sessions, triggers, interpreter, library)")
+
+	// Load the services directory: parse + validate each folder's cfg, register
+	// it with the kernel (library + trigger wiring), and persist its ID card to
+	// the admin index. The cfg is the program; this is where it gets loaded.
+	if servicesDir != "" {
+		loaded, err := cfg.LoadDir(servicesDir, cfg.DefaultVocabulary())
+		if err != nil {
+			return err
+		}
+		// Boot-time persists get their own context: the signal context governs
+		// the idle wait, not the boot sequence.
+		bootCtx := context.Background()
+		for _, l := range loaded {
+			if err := k.Register(l.Service); err != nil {
+				return fmt.Errorf("register service %q: %w", l.Service.Name, err)
+			}
+			cfgJSON, _ := json.Marshal(l.Service)
+			if err := store.RecordService(bootCtx, storage.ServiceRecord{
+				ServiceID: l.Service.Name,
+				Name:      l.Service.Name,
+				Version:   l.Service.Version,
+				Status:    "live",
+				CfgJSON:   string(cfgJSON),
+			}); err != nil {
+				log.Warn().Err(err).Str("service", l.Service.Name).Msg("admin index record failed (already indexed?)")
+			}
+			log.Info().Str("service", l.Service.Name).Str("cfg", l.Path).
+				Int("steps", len(l.Service.Workflow)).Int("triggers", len(l.Service.Triggers)).
+				Msg("service registered")
+		}
+		log.Info().Int("service_count", len(loaded)).Str("dir", servicesDir).Msg("services loaded")
+	}
 
 	// The control API exposes live state (resources, queue, sessions) to wxg.
 	var srv *http.Server

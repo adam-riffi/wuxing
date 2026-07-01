@@ -1,0 +1,22 @@
+# notifier — the successor service of the worked example. Triggered by the
+# "mtg-db updated" event (declared as mtg's successor); composes a message via
+# the ai tool. The two services never touch — only the event bridges them.
+
+name: notifier
+version: "1"
+
+envelope:
+  request: 33554432       # 32 MiB
+  ai_request: 1
+  priority: background
+
+allow:
+  - tool: ai
+    operation: infer
+
+workflow:
+  - id: compose
+    tool: ai
+    operation: infer
+    with:
+      prompt: "Compose a short Discord announcement for the new Magic set named in the input."
