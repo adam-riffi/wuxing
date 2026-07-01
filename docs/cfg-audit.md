@@ -17,8 +17,10 @@ does nothing teaches the operator false confidence.
 | `envelope.ai_request` | envelope | AI-window admission (dual-resource) |
 | `envelope.max_wait` | envelope | queue patience before the starve policy fires |
 | `envelope.on_starve` | envelope | `escalate` (age into the privileged class → may draw the overclock reserve) or `fail` (drop + record) |
-| `allow` (tool/operation/target grants) | root | connectors grant check at the bus |
-| `triggers` (cron/event) | root | trigger registration (firing loop still pending) |
+| `allow` (tool/operation/target grants) | root | connectors grant check at the bus (the daemon grants the union of loaded allowlists) |
+| `triggers` (cron/event) | root | trigger registration + the daemon's cron watcher (fires due schedules as new sequences) |
+| trigger `timezone` | triggers | folded into the cron schedule (`CRON_TZ`), validated at load |
+| `concurrency` (allow/forbid) | root | `forbid` skips a fire while a run of the service is in flight (k8s CronJob "Forbid" semantics) |
 | `workflow` steps: tool XOR script, `with:`, `next`/`branch` | workflow | interpreter (script *execution* pending Docker) |
 | `successors` (service/topic/when) | root | condition eval + cascade firing |
 
@@ -42,12 +44,11 @@ Grouped by the concern that needs them; ordered by how soon each bites.
 | step `retry` / `backoff` | the designed two-tier error policy (stop / retry / standby) has no declaration | k8s `backoffLimit`, Airflow `retries` |
 | `on_error` (run-level policy) | stop / retry / standby per the design's fixed outcome vocabulary | supervisor policies |
 
-### Scheduling (bites as soon as load exists)
+### Scheduling
 | Missing param | Why |
 |---|---|
-| `concurrency` (allow / forbid / replace) | can two runs of the same service overlap? A slow cron + a manual run collide today with no declared answer | k8s CronJob `concurrencyPolicy` |
-| cron `timezone` | "0 9 * * *" in whose morning? DST changes the answer twice a year | k8s CronJob `timeZone` |
-| trigger `debounce` / coalescing | a chatty event topic shouldn't fan out into N queued duplicate runs | — |
+| `concurrency: replace` | allow + forbid exist; "replace" (cancel the running one, start fresh) needs run cancellation first |
+| trigger `debounce` / coalescing | a chatty event topic shouldn't fan out into N queued duplicate runs |
 
 ### AI governance (bites with real backends)
 | Missing param | Why |
@@ -90,9 +91,9 @@ the outcome instead of escalating.
 
 ## Recommended sequencing
 
-1. **Now (this PR):** thread the envelope into the scheduler job (request, limit,
-   ai_request, priority, max_wait) + add `on_starve` — closes Tier 2's worst rows.
-2. **With the cron loop:** `timezone`, `concurrency`.
+1. ~~Thread the envelope into the scheduler job + `on_starve`~~ — **done**.
+2. ~~With the cron loop: `timezone`, `concurrency`~~ — **done** (replace-policy
+   and debounce remain).
 3. **With the Docker engine:** `image`, `env`, per-step `timeout`, `retry`,
    `on_error` — the execution contract.
 4. **With real AI backends:** the `ai.*` governance block.
