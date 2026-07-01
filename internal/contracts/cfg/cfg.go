@@ -7,6 +7,7 @@ package cfg
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -46,16 +47,22 @@ type Trigger struct {
 	Spec string `yaml:"spec"` // cron expression or event topic
 }
 
-// Step is one node of the service's internal workflow — a tool.operation call,
-// optionally branching on its emitted value.
+// Step is one node of the service's internal workflow: either a tool.operation
+// call (routed over the bus) or a script run (the service's own code, executed
+// inside its sealed container), optionally branching on its emitted value.
 type Step struct {
 	ID        string         `yaml:"id"`
 	Tool      string         `yaml:"tool"`
 	Operation string         `yaml:"operation"`
-	With      map[string]any `yaml:"with"`   // call arguments for this step
+	Script    string         `yaml:"script"` // path within the service folder, e.g. scripts/check.py
+	With      map[string]any `yaml:"with"`   // call arguments / script inputs for this step
 	Next      string         `yaml:"next"`   // unconditional successor step id
 	Branch    []Branch       `yaml:"branch"` // conditional routing on the step's output
 }
+
+// IsScript reports whether the step runs the service's own script (in its
+// container) rather than calling a platform tool.
+func (s Step) IsScript() bool { return s.Script != "" }
 
 // Branch routes to a step when a condition on the previous step's output holds.
 type Branch struct {
@@ -109,7 +116,17 @@ func (s *Service) Validate(vocab Vocabulary) error {
 			return fmt.Errorf("cfg: %q: duplicate step id %q", s.Name, step.ID)
 		}
 		ids[step.ID] = true
-		if !vocab.Known(step.Tool, step.Operation) {
+		// A step is exactly one of: a script run, or a tool.operation call.
+		switch {
+		case step.IsScript() && step.Tool != "":
+			return fmt.Errorf("cfg: %q: step %q declares both script and tool", s.Name, step.ID)
+		case step.IsScript():
+			// Script steps are the service's own code; the vocabulary does not
+			// apply. Path hygiene only: relative, inside the service folder.
+			if strings.HasPrefix(step.Script, "/") || strings.Contains(step.Script, "..") {
+				return fmt.Errorf("cfg: %q: step %q script path %q must be relative to the service folder", s.Name, step.ID, step.Script)
+			}
+		case !vocab.Known(step.Tool, step.Operation):
 			return fmt.Errorf("cfg: %q: step %q calls unknown %s.%s", s.Name, step.ID, step.Tool, step.Operation)
 		}
 	}

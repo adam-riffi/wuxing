@@ -70,6 +70,15 @@ func (in *Interpreter) Run(ctx context.Context, svc *cfg.Service, stamp lineage.
 			return nil, fmt.Errorf("interpreter: %q: workflow references missing step %q", svc.Name, cur)
 		}
 
+		if step.IsScript() {
+			// A script step is the service's own code and runs inside its sealed
+			// container (launcher → engine), never over the bus. Until the real
+			// container engine is wired, fail with the reason instead of a
+			// cryptic unknown-call error.
+			return nil, fmt.Errorf("interpreter: %q: step %q is a script (%s) — script steps run in the service container, which needs the container engine (not yet wired)",
+				svc.Name, step.ID, step.Script)
+		}
+
 		callStamp := stamp.WithCall(in.minter.CallID(), order)
 		out, err := in.Call(ctx, callStamp, step.Tool, step.Operation, buildPayload(acc, step.With))
 		if err != nil {
