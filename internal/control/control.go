@@ -40,9 +40,30 @@ type SessionInfo struct {
 	Service string `json:"service"`
 }
 
-// Handler builds the control API over a snapshot function. The daemon supplies a
-// function that reads the live kernel; tests supply a stub.
-func Handler(snapshot func() State) http.Handler {
+// RunRequest asks the daemon to fire a service now — a manual external trigger,
+// opening a new sequence. The minimal form; the run-control parameters
+// (targeting, inputs, forced sequences — docs/cli-run-control.md) extend it.
+type RunRequest struct {
+	Service string `json:"service"`
+}
+
+// RunStarted reports a fired run's lineage ids, so the caller can follow it
+// (`wxg show <sequence>`). Firing is decoupled from completion: the run may
+// still be queued or executing when this returns.
+type RunStarted struct {
+	Service  string `json:"service"`
+	Sequence string `json:"sequence"`
+	Run      string `json:"run"`
+}
+
+type apiError struct {
+	Error string `json:"error"`
+}
+
+// Handler builds the control API over a snapshot function (read side) and a
+// fire function (write side). The daemon supplies functions over the live
+// kernel; tests supply stubs.
+func Handler(snapshot func() State, fire func(RunRequest) (RunStarted, error)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -51,6 +72,27 @@ func Handler(snapshot func() State) http.Handler {
 	mux.HandleFunc("/state", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(snapshot())
+	})
+	mux.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(apiError{Error: "POST only"})
+			return
+		}
+		var req RunRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(apiError{Error: "body must be JSON with a non-empty \"service\""})
+			return
+		}
+		started, err := fire(req)
+		if err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(apiError{Error: err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(started)
 	})
 	return mux
 }
