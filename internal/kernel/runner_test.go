@@ -30,7 +30,7 @@ func testKernel(t *testing.T) *Kernel {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return Assemble(store, 1<<30)
+	return Assemble(store, 1<<30, 100)
 }
 
 func TestKernel_Run_WritesSpineAndExecutesWorkflow(t *testing.T) {

@@ -31,6 +31,7 @@ import (
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/control"
 	"github.com/adam-riffi/wuxing/internal/kernel"
+	"github.com/adam-riffi/wuxing/internal/kernel/triggers"
 	"github.com/adam-riffi/wuxing/internal/manifest"
 	"github.com/adam-riffi/wuxing/internal/storage"
 	"github.com/adam-riffi/wuxing/internal/tools/ai"
@@ -82,6 +83,14 @@ func stateFrom(k *kernel.Kernel) control.State {
 // schedulerCapacityBytes is a placeholder memory pool for the scheduler; the
 // kernel should measure real available memory and make this configurable.
 const schedulerCapacityBytes = 2 << 30 // 2 GiB
+
+// aiWindowCapacity is the AI-quota window (units per refill period): the
+// dual-resource budget AI jobs draw on. Placeholder until it is configurable.
+const aiWindowCapacity = 60
+
+// aiWindowRefillEvery is how often the clock refills the AI window (the window
+// refills on a clock, never on job completion — that's the design's rate lane).
+const aiWindowRefillEvery = time.Hour
 
 func main() {
 	// Subcommands dispatch on the first argument; the bare `wuxing` runs the daemon.
@@ -141,10 +150,24 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 	}
 	log.Info().Str("store", resolved).Msg("fact store opened (sqlite, WAL)")
 
-	k := kernel.Assemble(store, schedulerCapacityBytes)
+	k := kernel.Assemble(store, schedulerCapacityBytes, aiWindowCapacity)
 	defer func() {
 		if cerr := k.Close(); cerr != nil {
 			log.Error().Err(cerr).Msg("error closing kernel")
+		}
+	}()
+
+	// The AI window refills on a clock (never on completion): the rate lane.
+	go func() {
+		ticker := time.NewTicker(aiWindowRefillEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				k.Scheduler.RefillWindow(aiWindowCapacity)
+			}
 		}
 	}()
 	log.Info().Msg("kernel ready — faces assembled (bus, scheduler, sessions, triggers, interpreter, library)")
@@ -210,12 +233,23 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 	}
 	log.Info().Int("schedules", watched).Msg("cron watcher started")
 
-	// The control API exposes live state (resources, queue, sessions) to wxg.
+	// The control API: read side (live state) + write side (fire a service).
 	var srv *http.Server
 	if apiAddr != "" {
+		fire := func(req control.RunRequest) (control.RunStarted, error) {
+			if _, err := k.Library.GetDefinition(req.Service); err != nil {
+				return control.RunStarted{}, err
+			}
+			r := k.Triggers.FireExternal(req.Service, triggers.KindManual)
+			return control.RunStarted{
+				Service:  req.Service,
+				Sequence: string(r.Stamp.Sequence),
+				Run:      string(r.Stamp.Run),
+			}, nil
+		}
 		srv = &http.Server{
 			Addr:              apiAddr,
-			Handler:           control.Handler(func() control.State { return stateFrom(k) }),
+			Handler:           control.Handler(func() control.State { return stateFrom(k) }, fire),
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {

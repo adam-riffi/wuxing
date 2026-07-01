@@ -173,6 +173,22 @@ type Snapshot struct {
 	QueuedIDs      []string `json:"queued_ids"`
 }
 
+// Fits reports whether a job with the given request and AI request could EVER
+// be admitted under this scheduler's capacities — the registration-time sanity
+// check (a service whose envelope can never fit should be refused at load, not
+// silently dropped at fire time).
+func (s *Scheduler) Fits(request, aiRequest int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if request > s.capacity {
+		return fmt.Errorf("scheduler: request %d exceeds memory capacity %d", request, s.capacity)
+	}
+	if aiRequest > s.windowCap {
+		return fmt.Errorf("scheduler: ai request %d exceeds AI window capacity %d", aiRequest, s.windowCap)
+	}
+	return nil
+}
+
 // Snapshot returns the scheduler's current resource and queue state.
 func (s *Scheduler) Snapshot() Snapshot {
 	s.mu.Lock()

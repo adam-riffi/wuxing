@@ -99,8 +99,19 @@ state from the **running daemon** over its control API — so the daemon must be
 `--api` defaults to `127.0.0.1:7777` (matches the daemon's `--api`). Today the
 queue/sessions usually read empty because runs execute synchronously; they fill
 in once the daemon runs concurrent / long work (container services). The resource
-pools always show. This is the first piece of the **daemon control channel** that
-the control commands and a TUI will build on.
+pools always show.
+
+### `wxg run` — fire a service on demand
+
+The control API's write side: a **manual external trigger** opening a new
+sequence, exactly like a cron fire.
+
+| Command | Status | What it does |
+|---|---|---|
+| `wxg run <service> [--api] [--timeout s]` | ✅ | POST /run to the daemon: validates the service is registered, fires it (KindManual), prints the sequence/run ids to follow with `wxg show`. Unknown service → a clear refusal. |
+
+The run-control parameters (`--step`, `--with`, `--sequence`, `--no-cascade`,
+`--dry-run` — [`cli-run-control.md`](cli-run-control.md)) extend this command next.
 
 ### `wxg library` — the service catalog (🚧 stubs)
 

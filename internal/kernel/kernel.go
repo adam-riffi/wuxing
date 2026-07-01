@@ -5,6 +5,8 @@
 package kernel
 
 import (
+	"fmt"
+
 	"github.com/adam-riffi/wuxing/internal/contracts/cfg"
 	"github.com/adam-riffi/wuxing/internal/kernel/bus"
 	"github.com/adam-riffi/wuxing/internal/kernel/interpreter"
@@ -38,7 +40,7 @@ type Kernel struct {
 // onFire callbacks are left unset here; the run loop wires them when it launches
 // jobs and fires successor runs. Tool handlers are registered on Bus separately,
 // once their backends/config exist (a connector's domain DB, the ai backend).
-func Assemble(store *storage.DB, memoryCapacity int64) *Kernel {
+func Assemble(store *storage.DB, memoryCapacity, aiWindow int64) *Kernel {
 	minter := lineage.NewMinter()
 	b := bus.New()
 
@@ -50,7 +52,7 @@ func Assemble(store *storage.DB, memoryCapacity int64) *Kernel {
 		Store:       store,
 		Bus:         b,
 		Minter:      minter,
-		Scheduler:   scheduler.New(memoryCapacity, rn.onAdmit, scheduler.WithOnExpire(rn.onExpire)),
+		Scheduler:   scheduler.New(memoryCapacity, rn.onAdmit, scheduler.WithOnExpire(rn.onExpire), scheduler.WithAIWindow(aiWindow)),
 		Sessions:    sessions.New(),
 		Triggers:    triggers.New(minter, rn.onFire),
 		Interpreter: interpreter.New(b, cfg.DefaultVocabulary(), minter),
@@ -95,6 +97,11 @@ func (k *Kernel) Snapshot() Snapshot {
 // triggers face: each successor becomes an event rule, and each external trigger
 // (cron/event) is registered so the service starts when it fires.
 func (k *Kernel) Register(svc *cfg.Service) error {
+	// A service whose envelope can never be admitted is refused here, loudly,
+	// instead of being silently dropped at fire time.
+	if err := k.Scheduler.Fits(svc.Envelope.Request, svc.Envelope.AIRequest); err != nil {
+		return fmt.Errorf("kernel: service %q can never be admitted: %w", svc.Name, err)
+	}
 	if err := k.Library.Register(svc); err != nil {
 		return err
 	}

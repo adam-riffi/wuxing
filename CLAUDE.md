@@ -54,7 +54,8 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | metering | `internal/metering` | `StoreMeter` implements connectors.Meter + ai.Meter; tool facts persist to the detail tables, stamped from the envelope lineage |
 | daemon | `cmd/wuxing` | boots, loads manifest + services (`--services`), opens the fact store (`--store`, WAL), assembles the kernel, **registers tool handlers** (ai over the auto-detected agent CLI; connectors over `domain.db` with the union of loaded grants), **starts the cron watcher**, serves the control API (`--api`), clean shutdown. **The core loop is closed**: cfg on disk → cron fires → admission → real AI → facts/rollups, zero Go |
 | cron watcher | `internal/kernel/triggers/cron.go` | `StartCron` parses every registered rule (robfig/cron: 5-field, @descriptors, CRON_TZ) and fires due schedules via FireExternal (new sequence per fire); bad spec fails the start. cfg: trigger `timezone`, service-level `concurrency: allow\|forbid` (forbid = skip overlapping fire, enforced in Runner.skipOverlap) |
-| control API | `internal/control` | loopback HTTP/JSON daemon channel; `GET /state` serves `kernel.Snapshot()` (scheduler resources + queue + running sessions). `wxg state` is the client. The keystone for the control side — write side (drive runs) extends it |
+| control API | `internal/control` | loopback HTTP/JSON daemon channel: `GET /state` (live snapshot; `wxg state`) + `POST /run` (fire a service, KindManual, new sequence; `wxg run <service>`). Run-control params (docs/cli-run-control.md) extend /run next |
+| AI window | daemon + kernel | `Assemble(store, mem, aiWindow)`; the daemon refills the window hourly (clock-refilled rate lane). `Scheduler.Fits` refuses never-admittable envelopes at Register (loud, not a silent drop); Runner rolls back bookkeeping when Submit refuses a job |
 | kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
 | run loop | `internal/kernel/runner.go` | `Kernel.Run` (spine + interpreter) + a `Runner` wiring onFire→scheduler.Submit and onAdmit→Run→fire successors. Jobs carry the FULL cfg envelope (request/limit/ai_request/priority/max_wait/on_starve → `jobFor`); starved-out jobs (ExpiryFail) release their sequence via `onExpire`. A cron trigger drives a full cascade under one sequence_id. `Kernel.Register` wires a service's triggers |
 | cli | `cmd/wxg` | cobra tree; `wxg infer detect/chat/agent` (auto-detected agent CLI); `wxg runs` + `wxg show <sequence>` read the fact store (the `kubectl get`/`describe` of wuxing). library subcommands still stubs; `wxg run` control side designed in [docs/cli-run-control.md](docs/cli-run-control.md) (needs the daemon RPC) |
@@ -113,11 +114,13 @@ real AI (auto-detected codex) → facts + rollups + sequence close → visible i
 
 Remaining, in order:
 
-1. **`POST /run` + `wxg run <service>`** — the control API's write side (v1 item
-   #3): fire a service on demand; then the run-control params
-   (docs/cli-run-control.md: --step/--with/--sequence/--no-cascade/--dry-run).
+1. ~~**`POST /run` + `wxg run <service>`**~~ — **done** (verified live: fired the
+   on-disk mtg service through real codex, 47s inference, success + facts).
+   Still open from it: the run-control params (docs/cli-run-control.md:
+   --step/--with/--sequence/--no-cascade/--dry-run).
 2. **`wxg library index/deindex` + `wxg services`** — catalog management over the
-   control API; wire library to persist+load through the admin index (v1 #4).
+   control API; wire library to persist+load through the admin index (v1 #4 —
+   the LAST v1 item).
 3. **real Docker `Engine`** behind the launcher (needs Docker Desktop) — executes
    `script:` steps per docs/cfg-guide.md's contract (stdin fact → stdout fact,
    exit → outcome); brings cfg params image/env/timeout/retry/on_error
@@ -147,13 +150,12 @@ backend-configurable (SQLite default / Postgres via DSN). The daemon
 (`kernel.Assemble`), then idles. Everything is unit/substrate-tested; **M1
 (the worked example through the real Go components) is reached**.
 
-**Where to pick up:** Next tasks item 1 — **`POST /run` + `wxg run`** (the
-control API's write side). The core loop is closed: the daemon loads cfgs,
-registers tools (ai over the auto-detected agent CLI), and the cron watcher
-drives real runs end to end. What's missing is firing a service *on demand* from
-the CLI — extend `internal/control` with a POST /run handler that calls
-`Triggers.FireExternal` (KindManual), then the run-control params
-(docs/cli-run-control.md). After that: catalog commands, then the Docker engine.
+**Where to pick up:** Next tasks item 2 — **catalog commands** (`wxg library
+index/deindex`, `wxg services`), the last v1 item. The core loop is closed and
+drivable: cfgs load, cron fires, `wxg run <service>` fires on demand (POST /run),
+all through real AI. Extend `internal/control` with catalog endpoints backed by
+`Kernel.Register`/library deregister + the admin index (`storage.ListServices`),
+then implement the run-control params on /run. After that: the Docker engine.
 
 **Parked — needs the user's infrastructure (do NOT blind-debug via CI):**
 - Postgres *execution* verification — needs Docker (testcontainers) running or a
