@@ -102,3 +102,73 @@ func TestTriggers_MultipleSuccessorsShareSequence(t *testing.T) {
 		t.Error("each successor must get a distinct run id")
 	}
 }
+
+func TestTriggers_UnregisterService_RemovesCronAndEvent(t *testing.T) {
+	tr := New(seqMinter(), nil)
+	tr.RegisterCron("svc", "@hourly")
+	tr.RegisterEvent("svc", "some-topic")
+	tr.RegisterEvent("other", "some-topic") // must survive
+
+	tr.UnregisterService("svc")
+
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if _, ok := tr.cron["svc"]; ok {
+		t.Error("cron rule for svc must be removed after UnregisterService")
+	}
+	for _, svcs := range tr.event {
+		for _, s := range svcs {
+			if s == "svc" {
+				t.Errorf("event rule listing svc must be removed: still in %v", tr.event)
+			}
+		}
+	}
+	if svcs, ok := tr.event["some-topic"]; !ok {
+		t.Error("other service's event rule must survive")
+	} else if len(svcs) != 1 || svcs[0] != "other" {
+		t.Errorf("wrong survivors: %v", svcs)
+	}
+}
+
+func TestTriggers_UnregisterService_UnknownIsNoOp(t *testing.T) {
+	tr := New(seqMinter(), nil)
+	tr.RegisterCron("svc", "@hourly")
+
+	tr.UnregisterService("ghost") // must not panic
+
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if _, ok := tr.cron["svc"]; !ok {
+		t.Error("existing cron rule must survive unregistering an unknown service")
+	}
+}
+
+func TestTriggers_UnregisterService_EmptyTopicRemoved(t *testing.T) {
+	tr := New(seqMinter(), nil)
+	tr.RegisterEvent("svc", "solo-topic") // svc is the only subscriber
+
+	tr.UnregisterService("svc")
+
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if _, ok := tr.event["solo-topic"]; ok {
+		t.Error("topic with no subscribers must be removed from event map")
+	}
+}
+
+func TestTriggers_UnregisterService_NoFireAfterUnregister(t *testing.T) {
+	var fired []Run
+	tr := New(seqMinter(), func(r Run) { fired = append(fired, r) })
+	tr.RegisterEvent("svc", "topic")
+
+	tr.UnregisterService("svc")
+
+	cause := lineage.NewSequence("seq-1").WithRun("r", 0)
+	runs := tr.OnEvent("topic", cause)
+	if len(runs) != 0 {
+		t.Errorf("deregistered service must not fire: got %d runs", len(runs))
+	}
+	if len(fired) != 0 {
+		t.Errorf("onFire must not be called for deregistered service: got %v", fired)
+	}
+}

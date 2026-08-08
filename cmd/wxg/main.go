@@ -32,6 +32,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	root.AddCommand(newLibraryCmd())
+	root.AddCommand(newServicesCmd())
 	root.AddCommand(newInferCmd())
 	root.AddCommand(newRunsCmd())
 	root.AddCommand(newShowCmd())
@@ -40,8 +41,8 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// newLibraryCmd maps the operator surface of the library tool. The subcommands
-// are stubs at Phase 0; they are implemented against the library tool in Phase 5.
+// newLibraryCmd maps the operator surface of the library tool. index and
+// deindex are implemented; status/calls/functions remain stubs.
 func newLibraryCmd() *cobra.Command {
 	lib := &cobra.Command{
 		Use:   "library",
@@ -53,14 +54,14 @@ func newLibraryCmd() *cobra.Command {
 			Use:   use,
 			Short: short,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				return fmt.Errorf("%s: not implemented yet (Phase 5)", cmd.CommandPath())
+				return fmt.Errorf("%s: not implemented yet", cmd.CommandPath())
 			},
 		}
 	}
 
 	lib.AddCommand(
-		stub("index <service>", "register a service (draft → live)"),
-		stub("deindex <service>", "deregister a service (drain first)"),
+		newLibraryIndexCmd(),
+		newLibraryDeindexCmd(),
 		stub("status <service>", "drift: live folder vs canonical snapshot"),
 		stub("calls <service>", "introspect declared tool calls"),
 		stub("functions <service>", "introspect declared script functions"),

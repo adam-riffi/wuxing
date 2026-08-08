@@ -31,11 +31,12 @@ func TestNewRootCmd_Tree(t *testing.T) {
 }
 
 func TestLibrarySubcommand_StubError(t *testing.T) {
+	// library status is still a stub; verify it returns a clear not-implemented error.
 	root := newRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"library", "index", "mtg"})
+	root.SetArgs([]string{"library", "status", "mtg"})
 
 	err := root.Execute()
 	if err == nil {

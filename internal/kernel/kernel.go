@@ -121,6 +121,18 @@ func (k *Kernel) Register(svc *cfg.Service) error {
 	return nil
 }
 
+// Deregister removes a service from the catalog and unregisters its trigger
+// rules. It refuses if the service has running sessions — drain them first.
+// The live cron goroutine (started by StartCron) may still fire the service
+// until the daemon restarts; those fires will fail-fast in the interpreter.
+func (k *Kernel) Deregister(name string) error {
+	if k.Sessions.HasRunning(name) {
+		return fmt.Errorf("kernel: service %q has running sessions — drain before deregistering", name)
+	}
+	k.Triggers.UnregisterService(name)
+	return k.Library.Deregister(name)
+}
+
 // Close releases the kernel's resources: it closes the bus and the fact store.
 func (k *Kernel) Close() error {
 	k.Bus.Close()

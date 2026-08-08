@@ -54,11 +54,11 @@ Built and tested (Go, pure-Go deps, no cgo in app code):
 | metering | `internal/metering` | `StoreMeter` implements connectors.Meter + ai.Meter; tool facts persist to the detail tables, stamped from the envelope lineage |
 | daemon | `cmd/wuxing` | boots, loads manifest + services (`--services`), opens the fact store (`--store`, WAL), assembles the kernel, **registers tool handlers** (ai over the auto-detected agent CLI; connectors over `domain.db` with the union of loaded grants), **starts the cron watcher**, serves the control API (`--api`), clean shutdown. **The core loop is closed**: cfg on disk → cron fires → admission → real AI → facts/rollups, zero Go |
 | cron watcher | `internal/kernel/triggers/cron.go` | `StartCron` parses every registered rule (robfig/cron: 5-field, @descriptors, CRON_TZ) and fires due schedules via FireExternal (new sequence per fire); bad spec fails the start. cfg: trigger `timezone`, service-level `concurrency: allow\|forbid` (forbid = skip overlapping fire, enforced in Runner.skipOverlap) |
-| control API | `internal/control` | loopback HTTP/JSON daemon channel: `GET /state` (live snapshot; `wxg state`) + `POST /run` (fire a service, KindManual, new sequence; `wxg run <service>`). Run-control params (docs/cli-run-control.md) extend /run next |
+| control API | `internal/control` | loopback HTTP/JSON daemon channel: `GET /state` + `POST /run` + `GET /library` + `POST /library/index` + `POST /library/deindex`; wire types + `CatalogFuncs` live here |
 | AI window | daemon + kernel | `Assemble(store, mem, aiWindow)`; the daemon refills the window hourly (clock-refilled rate lane). `Scheduler.Fits` refuses never-admittable envelopes at Register (loud, not a silent drop); Runner rolls back bookkeeping when Submit refuses a job |
 | kernel assembly | `internal/kernel` | `Assemble` wires bus + scheduler + sessions + triggers + interpreter + library + StoreMeter over the fact store; `Close` tears down |
-| run loop | `internal/kernel/runner.go` | `Kernel.Run` (spine + interpreter) + a `Runner` wiring onFire→scheduler.Submit and onAdmit→Run→fire successors. Jobs carry the FULL cfg envelope (request/limit/ai_request/priority/max_wait/on_starve → `jobFor`); starved-out jobs (ExpiryFail) release their sequence via `onExpire`. A cron trigger drives a full cascade under one sequence_id. `Kernel.Register` wires a service's triggers |
-| cli | `cmd/wxg` | cobra tree; `wxg infer detect/chat/agent` (auto-detected agent CLI); `wxg runs` + `wxg show <sequence>` read the fact store (the `kubectl get`/`describe` of wuxing). library subcommands still stubs; `wxg run` control side designed in [docs/cli-run-control.md](docs/cli-run-control.md) (needs the daemon RPC) |
+| run loop | `internal/kernel/runner.go` | `Kernel.Run` (spine + interpreter) + a `Runner` wiring onFire→scheduler.Submit and onAdmit→Run→fire successors. Jobs carry the FULL cfg envelope; starved-out jobs (ExpiryFail) release their sequence. `Kernel.Register`/`Kernel.Deregister` wire/unwire a service's triggers; drain check in Deregister |
+| cli | `cmd/wxg` | cobra tree; `wxg infer detect/chat/agent`; `wxg runs`/`wxg show`; `wxg state`/`wxg run`; **`wxg library index/deindex`** (HTTP to daemon); **`wxg services`** (direct DB read — no daemon needed); status/calls/functions stubs |
 | codex backend | `internal/tools/ai/codex.go` | `CodexCLI` implements **both** `Backend` (infer) and `AgentBackend` (agent) via `codex exec`; config `WUXING_CODEX_*` |
 | agent auto-detect | `internal/tools/ai/detect.go` | scans PATH for known agent CLIs (codex, claude, gemini, hermes, od); `Detect`/`DetectDefault`/`ResolveAgent`; `CLIAgent` now implements `Backend` too. No manual wiring — used by `wxg infer` + `wuxing agent`. See [docs/commands.md](docs/commands.md), [docs/tui-build.md](docs/tui-build.md) |
 
@@ -118,10 +118,16 @@ Remaining, in order:
    on-disk mtg service through real codex, 47s inference, success + facts).
    Still open from it: the run-control params (docs/cli-run-control.md:
    --step/--with/--sequence/--no-cascade/--dry-run).
-2. **`wxg library index/deindex` + `wxg services`** — catalog management over the
-   control API; wire library to persist+load through the admin index (v1 #4 —
-   the LAST v1 item).
-3. **real Docker `Engine`** behind the launcher (needs Docker Desktop) — executes
+2. ~~**`wxg library index/deindex` + `wxg services`**~~ — **done** (2026-08-07).
+   `Kernel.Deregister` + `Triggers.UnregisterService`; control API catalog endpoints
+   (`GET /library`, `POST /library/index`, `POST /library/deindex`); daemon wires
+   closures + persists to/reloads from admin index; CLI `wxg library index/deindex`
+   (HTTP to daemon) and `wxg services` (direct DB). v1 is feature-complete.
+3. **run-control params on `/run`** (docs/cli-run-control.md) — `--step`/`--from`/
+   `--to`/`--only` targeting; `--with`/`--input`; `--sequence`/`--no-cascade`/
+   `--then`; `--dry-run`/`--wait`/`--detach`/`--priority`/`--force`. Extend
+   `RunRequest` then surface in `wxg run`.
+4. **real Docker `Engine`** behind the launcher (needs Docker Desktop) — executes
    `script:` steps per docs/cfg-guide.md's contract (stdin fact → stdout fact,
    exit → outcome); brings cfg params image/env/timeout/retry/on_error
    (docs/cfg-audit.md tier 3) and makes `wxg state` queues/sessions light up.
@@ -150,12 +156,11 @@ backend-configurable (SQLite default / Postgres via DSN). The daemon
 (`kernel.Assemble`), then idles. Everything is unit/substrate-tested; **M1
 (the worked example through the real Go components) is reached**.
 
-**Where to pick up:** Next tasks item 2 — **catalog commands** (`wxg library
-index/deindex`, `wxg services`), the last v1 item. The core loop is closed and
-drivable: cfgs load, cron fires, `wxg run <service>` fires on demand (POST /run),
-all through real AI. Extend `internal/control` with catalog endpoints backed by
-`Kernel.Register`/library deregister + the admin index (`storage.ListServices`),
-then implement the run-control params on /run. After that: the Docker engine.
+**Where to pick up:** v1 is feature-complete. The catalog commands are done
+(item 2 closed 2026-08-07). Next is the **run-control params on `/run`** (item 3
+in Next tasks) — extend `control.RunRequest` with targeting/input/sequencing/
+execution-mode fields (docs/cli-run-control.md) then surface via `wxg run` flags.
+After that: the Docker engine (item 4).
 
 **Parked — needs the user's infrastructure (do NOT blind-debug via CI):**
 - Postgres *execution* verification — needs Docker (testcontainers) running or a

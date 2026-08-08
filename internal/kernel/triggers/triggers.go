@@ -84,6 +84,29 @@ func (t *Triggers) FireExternal(service string, kind Kind) Run {
 	return r
 }
 
+// UnregisterService removes all cron and event rules declared for name. The
+// running cron goroutine (started by StartCron) will still fire until the
+// daemon restarts; the interpreter fails-fast on the stale fire because the
+// service is no longer in the library.
+func (t *Triggers) UnregisterService(name string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.cron, name)
+	for topic, svcs := range t.event {
+		out := svcs[:0]
+		for _, s := range svcs {
+			if s != name {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			delete(t.event, topic)
+		} else {
+			t.event[topic] = out
+		}
+	}
+}
+
 // OnEvent fires every service registered for topic, each INHERITING the
 // sequence carried by the triggering event and taking the next sequence_order,
 // so the cascade stays one sequence. Events with no successor are a no-op.

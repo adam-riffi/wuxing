@@ -206,6 +206,37 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 		log.Info().Int("service_count", len(loaded)).Str("dir", servicesDir).Msg("services loaded")
 	}
 
+	// Reload any services that were dynamically indexed after the last boot (not
+	// in --services) so the catalog is fully restored from the admin index.
+	{
+		bootCtx := context.Background()
+		recs, err := store.ListServices(bootCtx)
+		if err != nil {
+			log.Warn().Err(err).Msg("admin index reload failed")
+		} else {
+			alreadyLoaded := map[string]bool{}
+			for _, n := range k.Library.List() {
+				alreadyLoaded[n] = true
+			}
+			for _, rec := range recs {
+				if alreadyLoaded[rec.Name] {
+					continue
+				}
+				var svc cfg.Service
+				if err := json.Unmarshal([]byte(rec.CfgJSON), &svc); err != nil {
+					log.Warn().Err(err).Str("service", rec.Name).Msg("admin index: invalid cfg JSON, skipping")
+					continue
+				}
+				if err := k.Register(&svc); err != nil {
+					log.Warn().Err(err).Str("service", rec.Name).Msg("admin index reload: register failed")
+					continue
+				}
+				grants = append(grants, connectorGrants(&svc)...)
+				log.Info().Str("service", rec.Name).Msg("service restored from admin index")
+			}
+		}
+	}
+
 	// Register the tool handlers on the bus so fired services can execute.
 	// ai: over the auto-detected agent CLI (a missing backend degrades to a
 	// clear per-call error, not a boot failure).
@@ -233,9 +264,11 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 	}
 	log.Info().Int("schedules", watched).Msg("cron watcher started")
 
-	// The control API: read side (live state) + write side (fire a service).
+	// The control API: read side (live state) + write side (fire a service +
+	// catalog management: index, deindex, list).
 	var srv *http.Server
 	if apiAddr != "" {
+		apiCtx := context.Background()
 		fire := func(req control.RunRequest) (control.RunStarted, error) {
 			if _, err := k.Library.GetDefinition(req.Service); err != nil {
 				return control.RunStarted{}, err
@@ -247,9 +280,54 @@ func run(ctx context.Context, manifestPath, storePath, apiAddr, servicesDir stri
 				Run:      string(r.Stamp.Run),
 			}, nil
 		}
+		catalog := control.CatalogFuncs{
+			Index: func(cfgJSON string) (control.CatalogEntry, error) {
+				var svc cfg.Service
+				if err := json.Unmarshal([]byte(cfgJSON), &svc); err != nil {
+					return control.CatalogEntry{}, fmt.Errorf("invalid cfg: %w", err)
+				}
+				if err := k.Register(&svc); err != nil {
+					return control.CatalogEntry{}, err
+				}
+				rec := storage.ServiceRecord{
+					ServiceID: svc.Name,
+					Name:      svc.Name,
+					Version:   svc.Version,
+					Status:    "live",
+					CfgJSON:   cfgJSON,
+				}
+				if err := store.RecordService(apiCtx, rec); err != nil {
+					log.Warn().Err(err).Str("service", svc.Name).Msg("admin index record failed")
+				}
+				return control.CatalogEntry{Name: svc.Name, Version: svc.Version, Status: "live"}, nil
+			},
+			Deindex: func(name string) error {
+				if err := k.Deregister(name); err != nil {
+					return err
+				}
+				return store.RemoveService(apiCtx, name)
+			},
+			List: func() []control.CatalogEntry {
+				recs, err := store.ListServices(apiCtx)
+				if err != nil {
+					log.Warn().Err(err).Msg("admin index list failed")
+					return nil
+				}
+				entries := make([]control.CatalogEntry, len(recs))
+				for i, r := range recs {
+					entries[i] = control.CatalogEntry{
+						Name:         r.Name,
+						Version:      r.Version,
+						Status:       r.Status,
+						RegisteredAt: r.RegisteredAt,
+					}
+				}
+				return entries
+			},
+		}
 		srv = &http.Server{
 			Addr:              apiAddr,
-			Handler:           control.Handler(func() control.State { return stateFrom(k) }, fire),
+			Handler:           control.Handler(func() control.State { return stateFrom(k) }, fire, catalog),
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {

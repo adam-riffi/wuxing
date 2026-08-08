@@ -21,7 +21,7 @@ func TestStateCmd(t *testing.T) {
 	}
 	srv := httptest.NewServer(control.Handler(func() control.State { return state }, func(control.RunRequest) (control.RunStarted, error) {
 		return control.RunStarted{}, nil
-	}))
+	}, control.CatalogFuncs{}))
 	defer srv.Close()
 	addr := strings.TrimPrefix(srv.URL, "http://")
 
@@ -48,7 +48,7 @@ func TestRunCmd(t *testing.T) {
 		func(req control.RunRequest) (control.RunStarted, error) {
 			gotService = req.Service
 			return control.RunStarted{Service: req.Service, Sequence: "seqAAAA1111", Run: "runBBBB2222"}, nil
-		}))
+		}, control.CatalogFuncs{}))
 	defer srv.Close()
 	addr := strings.TrimPrefix(srv.URL, "http://")
 
@@ -68,7 +68,7 @@ func TestRunCmd_UnknownService(t *testing.T) {
 		func() control.State { return control.State{} },
 		func(control.RunRequest) (control.RunStarted, error) {
 			return control.RunStarted{}, errUnknown
-		}))
+		}, control.CatalogFuncs{}))
 	defer srv.Close()
 	addr := strings.TrimPrefix(srv.URL, "http://")
 
