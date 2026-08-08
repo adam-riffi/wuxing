@@ -60,10 +60,36 @@ type apiError struct {
 	Error string `json:"error"`
 }
 
-// Handler builds the control API over a snapshot function (read side) and a
-// fire function (write side). The daemon supplies functions over the live
-// kernel; tests supply stubs.
-func Handler(snapshot func() State, fire func(RunRequest) (RunStarted, error)) http.Handler {
+// IndexRequest asks the daemon to register a service from its marshalled cfg.
+type IndexRequest struct {
+	CfgJSON string `json:"cfg_json"`
+}
+
+// DeindexRequest asks the daemon to deregister a service by name.
+type DeindexRequest struct {
+	Service string `json:"service"`
+}
+
+// CatalogEntry is one row of the registered service index.
+type CatalogEntry struct {
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	Status       string `json:"status"`
+	RegisteredAt string `json:"registered_at"`
+}
+
+// CatalogFuncs supplies catalog read/write operations to the Handler. The
+// daemon passes closures over the live kernel + admin index; tests pass stubs.
+type CatalogFuncs struct {
+	Index   func(cfgJSON string) (CatalogEntry, error)
+	Deindex func(name string) error
+	List    func() []CatalogEntry
+}
+
+// Handler builds the control API over a snapshot function (read side), a fire
+// function (write side), and catalog management functions.
+// The daemon supplies functions over the live kernel; tests supply stubs.
+func Handler(snapshot func() State, fire func(RunRequest) (RunStarted, error), catalog CatalogFuncs) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -93,6 +119,55 @@ func Handler(snapshot func() State, fire func(RunRequest) (RunStarted, error)) h
 			return
 		}
 		_ = json.NewEncoder(w).Encode(started)
+	})
+	mux.HandleFunc("/library", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		entries := catalog.List()
+		if entries == nil {
+			entries = []CatalogEntry{}
+		}
+		_ = json.NewEncoder(w).Encode(entries)
+	})
+	mux.HandleFunc("/library/index", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(apiError{Error: "POST only"})
+			return
+		}
+		var req IndexRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CfgJSON == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(apiError{Error: "body must be JSON with a non-empty \"cfg_json\""})
+			return
+		}
+		entry, err := catalog.Index(req.CfgJSON)
+		if err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(apiError{Error: err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(entry)
+	})
+	mux.HandleFunc("/library/deindex", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(apiError{Error: "POST only"})
+			return
+		}
+		var req DeindexRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(apiError{Error: "body must be JSON with a non-empty \"service\""})
+			return
+		}
+		if err := catalog.Deindex(req.Service); err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(apiError{Error: err.Error()})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 	return mux
 }
